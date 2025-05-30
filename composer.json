@@ -1,0 +1,27 @@
+{
+    "name": "pieceofcodero/symlink-composer-plugin",
+    "description": "Composer plugin for creating symlinks to packages in custom directories. Supports type-based, vendor-based, and name-based matching with configurable paths.",
+    "type": "composer-plugin",
+    "require": {
+        "php": "^7.2 || ^8.0",
+        "composer-plugin-api": "^2.0"
+    },
+    "require-dev": {
+        "composer/composer": "^2.8"
+    },
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "Pieceofcodero\\SymlinkComposerPlugin\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "Zoli Szabó",
+            "email": "zoli.szabo+github@gmail.com"
+        }
+    ],
+    "extra": {
+        "class": "Pieceofcodero\\SymlinkComposerPlugin\\Plugin"
+    }
+}
