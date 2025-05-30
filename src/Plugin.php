@@ -88,10 +88,10 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
     }
 
     /**
-     * Create symlinks for all packages (used by the symlink-recreate-all command)
+     * Get the SymlinkManager instance for use by the command
      */
-    public function createSymlinksForAllPackages(): void
+    public function getSymlinkManager(): SymlinkManager
     {
-        $this->symlinkManager->createSymlinksForAllPackages();
+        return $this->symlinkManager;
     }
 }

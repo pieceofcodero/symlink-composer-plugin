@@ -23,7 +23,9 @@ class SymlinkRecreateCommand extends BaseCommand
         // Find our plugin instance
         foreach ($pluginManager->getPlugins() as $plugin) {
             if ($plugin instanceof Plugin) {
-                $plugin->createSymlinksForAllPackages();
+                // Work directly with the SymlinkManager instead of delegating through the Plugin
+                $symlinkManager = $plugin->getSymlinkManager();
+                $symlinkManager->createSymlinksForAllPackages();
                 return 0; // Success
             }
         }
