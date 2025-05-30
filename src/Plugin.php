@@ -18,24 +18,12 @@ use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 {
     /**
-     * @var Composer
-     */
-    private $composer;
-
-    /**
-     * @var IOInterface
-     */
-    private $io;
-
-    /**
      * @var SymlinkManager
      */
     private $symlinkManager;
 
     public function activate(Composer $composer, IOInterface $io)
     {
-        $this->composer = $composer;
-        $this->io = $io;
         $this->symlinkManager = new SymlinkManager($composer, $io);
     }
 
@@ -43,9 +31,6 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
 
     public function uninstall(Composer $composer, IOInterface $io) {}
 
-    /**
-     * {@inheritdoc}
-     */
     public function getCapabilities(): array
     {
         return [
@@ -85,13 +70,5 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
             $package = $operation->getTargetPackage();
             $this->symlinkManager->createSymlinkForPackage($package);
         }
-    }
-
-    /**
-     * Get the SymlinkManager instance for use by the command
-     */
-    public function getSymlinkManager(): SymlinkManager
-    {
-        return $this->symlinkManager;
     }
 }

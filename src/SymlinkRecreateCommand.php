@@ -5,6 +5,7 @@ namespace Pieceofcodero\SymlinkComposerPlugin;
 use Composer\Command\BaseCommand;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
+use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 
 class SymlinkRecreateCommand extends BaseCommand
 {
@@ -15,22 +16,15 @@ class SymlinkRecreateCommand extends BaseCommand
             ->setDescription('Recreates all symlinks defined in the symlink-paths configuration.');
     }
 
-    protected function execute(InputInterface $input, OutputInterface $output)
+    protected function execute(InputInterface $input, OutputInterface $output): int
     {
         $composer = $this->getComposer();
-        $pluginManager = $composer->getPluginManager();
+        $io = $this->getIO();
         
-        // Find our plugin instance
-        foreach ($pluginManager->getPlugins() as $plugin) {
-            if ($plugin instanceof Plugin) {
-                // Work directly with the SymlinkManager instead of delegating through the Plugin
-                $symlinkManager = $plugin->getSymlinkManager();
-                $symlinkManager->createSymlinksForAllPackages();
-                return 0; // Success
-            }
-        }
+        // Create our own SymlinkManager instance
+        $symlinkManager = new SymlinkManager($composer, $io);
+        $symlinkManager->createSymlinksForAllPackages();
 
-        $output->writeln('<error>Could not find the Symlink Plugin instance.</error>');
-        return 1; // Error
+        return 0; // Success
     }
 }
