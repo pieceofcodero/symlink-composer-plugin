@@ -147,13 +147,22 @@ class SymlinkManager
         $packageName = $package->getName();
         $packagePath = $vendorDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $packageName);
 
+        $extra = $package->getExtra();
+        $preferredName = $extra['symlink-preferred-name'] ?? null;
+        $preferredVendor = $extra['symlink-preferred-vendor'] ?? null;
+        $preferredPackage = $extra['symlink-preferred-package'] ?? null;
+
         // Replace placeholders in target path.
         $resolvedTargetPath = str_replace(
-            ['{$name}', '{$vendor}', '{$package}'],
             [
-                basename($packageName), // package name without vendor
-                dirname($packageName),  // vendor name
-                $packageName           // full package name
+                '{$name}',
+                '{$vendor}',
+                '{$package}',
+            ],
+            [
+                $preferredName ?: basename($packageName),    // package name without vendor
+                $preferredVendor ?: dirname($packageName),   // vendor name
+                $preferredPackage ?: $packageName,           // full package name
             ],
             $targetPath
         );
