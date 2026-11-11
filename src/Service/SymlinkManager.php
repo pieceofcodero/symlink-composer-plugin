@@ -147,28 +147,10 @@ class SymlinkManager
         $packageName = $package->getName();
         $packagePath = $vendorDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $packageName);
 
-        $extra = $package->getExtra();
-        $preferredName = $extra['symlink-preferred-name'] ?? null;
-        $preferredVendor = $extra['symlink-preferred-vendor'] ?? null;
-        $preferredPackage = $extra['symlink-preferred-package'] ?? null;
-
-        // Replace placeholders in target path.
-        $resolvedTargetPath = str_replace(
-            [
-                '{$name}',
-                '{$vendor}',
-                '{$package}',
-            ],
-            [
-                $preferredName ?: basename($packageName),    // package name without vendor
-                $preferredVendor ?: dirname($packageName),   // vendor name
-                $preferredPackage ?: $packageName,           // full package name
-            ],
-            $targetPath
-        );
-
-        // Normalize resolvedTargetPath for directory separators
-        $resolvedTargetPath = str_replace('/', DIRECTORY_SEPARATOR, $resolvedTargetPath);
+        $resolvedTargetPath = $this->resolveTargetPath($package, $targetPath);
+        if ($resolvedTargetPath === null) {
+            return;
+        }
 
         if (!is_dir($packagePath)) {
             $this->io->write("<warning>Package path does not exist: $packagePath.</warning>");
@@ -205,6 +187,119 @@ class SymlinkManager
         } else {
             $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
         }
+    }
+
+    /**
+     * Root configuration chooses the destination; package metadata must stay within it.
+     * Validate before creating directories or removing an existing link.
+     */
+    private function resolveTargetPath(PackageInterface $package, string $targetPath): ?string
+    {
+        $extra = $package->getExtra();
+        $packageName = $package->getName();
+        $placeholders = [
+            '{$name}' => ['symlink-preferred-name', basename($packageName)],
+            '{$vendor}' => ['symlink-preferred-vendor', dirname($packageName)],
+            '{$package}' => ['symlink-preferred-package', $packageName],
+        ];
+        $replacements = [];
+        $firstPlaceholder = null;
+
+        foreach ($placeholders as $placeholder => list($key, $default)) {
+            $position = strpos($targetPath, $placeholder);
+            if ($position === false) {
+                continue;
+            }
+
+            $firstPlaceholder = $firstPlaceholder === null ? $position : min($firstPlaceholder, $position);
+            $value = $extra[$key] ?? null;
+            if ($value === null || $value === '') {
+                $value = $default;
+            }
+            if (!$this->isSafeRelativePath($value)) {
+                $this->io->write("<error>Invalid $key for $packageName: expected a safe relative path.</error>");
+                return null;
+            }
+            $replacements[$placeholder] = $value;
+        }
+
+        // A single substitution pass prevents metadata from expanding other placeholders.
+        $resolvedTargetPath = str_replace('/', DIRECTORY_SEPARATOR, strtr($targetPath, $replacements));
+        if ($firstPlaceholder === null) {
+            return $resolvedTargetPath;
+        }
+
+        // The literal directory before the first placeholder is controlled by the root project.
+        $baseDir = dirname(substr($targetPath, 0, $firstPlaceholder) . 'placeholder');
+        $baseDir = $this->resolveDirectoryPath($baseDir);
+        $targetDir = $this->resolveDirectoryPath(dirname($resolvedTargetPath));
+        if ($baseDir === null || $targetDir === null || !$this->isWithinDirectory($targetDir, $baseDir)) {
+            $this->io->write("<error>Invalid symlink destination for $packageName: path leaves the configured directory or has an invalid parent.</error>");
+            return null;
+        }
+
+        return $resolvedTargetPath;
+    }
+
+    private function isSafeRelativePath($path): bool
+    {
+        if (!is_string($path) || $path === '' || strpos($path, '\\') !== false
+            || preg_match('/[<>:"|?*{}\x00-\x1F\x7F]/', $path)) {
+            return false;
+        }
+
+        foreach (explode('/', $path) as $part) {
+            // Trailing dots/spaces can turn into traversal segments on Windows.
+            if ($part === '' || $part === '.' || $part === '..' || preg_match('/[. ]$/', $part)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * Resolve existing ancestors, including symlinks, without creating missing directories.
+     */
+    private function resolveDirectoryPath(string $path): ?string
+    {
+        $resolved = realpath($path);
+        if ($resolved !== false) {
+            return is_dir($resolved) ? $resolved : null;
+        }
+        if (file_exists($path) || is_link($path)) {
+            return null;
+        }
+
+        $parent = dirname($path);
+        if ($parent === $path) {
+            return null;
+        }
+        $resolvedParent = $this->resolveDirectoryPath($parent);
+        if ($resolvedParent === null) {
+            return null;
+        }
+
+        $name = basename($path);
+        if ($name === '.') {
+            return $resolvedParent;
+        }
+        if ($name === '..') {
+            return dirname($resolvedParent);
+        }
+
+        return rtrim($resolvedParent, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
+    }
+
+    private function isWithinDirectory(string $path, string $directory): bool
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            $path = strtolower($path);
+            $directory = strtolower($directory);
+        }
+
+        return $path === $directory
+            || strpos($path, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0;
     }
 
     private function getRelativePath(string $from, string $to): string
