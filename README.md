@@ -4,6 +4,8 @@ A Composer plugin that creates symlinks for specific packages according to defin
 
 ## Installation
 
+Requires PHP 7.4 or PHP 8.x and Composer 2.
+
 ```bash
 composer require pieceofcodero/symlink-composer-plugin
 ```
