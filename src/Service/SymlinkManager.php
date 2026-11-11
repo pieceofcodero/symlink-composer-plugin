@@ -19,7 +19,7 @@ class SymlinkManager
     private $io;
 
     /**
-     * @var array
+     * @var array<string, bool> Processing results indexed by package name.
      */
     private $processedPackages = [];
 
@@ -48,28 +48,30 @@ class SymlinkManager
     }
 
     /**
-     * Create symlink for a single package that was just installed/updated
+     * Create a symlink for a package, returning false if requested work failed.
      */
-    public function createSymlinkForPackage(PackageInterface $package): void
+    public function createSymlinkForPackage(PackageInterface $package): bool
     {
         if (!$this->shouldProcessPackage($package->getName())) {
-            return;
+            return $this->processedPackages[$package->getName()];
         }
 
         $vendorDir = $this->composer->getConfig()->get('vendor-dir');
         $symlinkConfig = $this->getSymlinkConfig();
 
         if (empty($symlinkConfig)) {
-            return; // No configuration, nothing to do
+            return true; // No configuration, nothing to do
         }
 
-        $this->processPackage($package, $symlinkConfig, $vendorDir);
+        $result = $this->processPackage($package, $symlinkConfig, $vendorDir);
+        $this->processedPackages[$package->getName()] = $result;
+        return $result;
     }
 
     /**
-     * Create symlinks for all packages (used by the symlink-recreate-all command)
+     * Process every package, returning false if any requested link failed.
      */
-    public function createSymlinksForAllPackages(): void
+    public function createSymlinksForAllPackages(): bool
     {
         // Reset processed packages
         $this->processedPackages = [];
@@ -80,17 +82,24 @@ class SymlinkManager
 
         if (empty($symlinkConfig)) {
             $this->io->write('<info>No symlink-paths configuration found.</info>');
-            return;
+            return true;
         }
 
         $this->io->write('<info>Recreating all symlinks...</info>');
 
+        $success = true;
         $repository = $this->composer->getRepositoryManager()->getLocalRepository();
         foreach ($repository->getPackages() as $package) {
             if ($this->shouldProcessPackage($package->getName())) {
-                $this->processPackage($package, $symlinkConfig, $vendorDir);
+                $result = $this->processPackage($package, $symlinkConfig, $vendorDir);
+                $this->processedPackages[$package->getName()] = $result;
+                if (!$result) {
+                    $success = false;
+                }
             }
         }
+
+        return $success;
     }
 
     /**
@@ -102,14 +111,15 @@ class SymlinkManager
         return $extra['symlink-paths'] ?? [];
     }
 
-    private function processPackage(PackageInterface $package, array $symlinkConfig, string $vendorDir): void
+    private function processPackage(PackageInterface $package, array $symlinkConfig, string $vendorDir): bool
     {
         foreach ($symlinkConfig as $targetPath => $criteria) {
             if ($this->shouldCreateSymlink($package, $criteria)) {
-                $this->createSymlink($package, $targetPath, $vendorDir);
-                break; // Only create one symlink per package.
+                return $this->createSymlink($package, $targetPath, $vendorDir);
             }
         }
+
+        return true; // No matching rule, nothing to do.
     }
 
     private function shouldCreateSymlink(PackageInterface $package, $criteria): bool
@@ -148,26 +158,26 @@ class SymlinkManager
         return $packageName === $criterion;
     }
 
-    private function createSymlink(PackageInterface $package, string $targetPath, string $vendorDir): void
+    private function createSymlink(PackageInterface $package, string $targetPath, string $vendorDir): bool
     {
         $packageName = $package->getName();
         $packagePath = $vendorDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $packageName);
 
         $resolvedTargetPath = $this->resolveTargetPath($package, $targetPath);
         if ($resolvedTargetPath === null) {
-            return;
+            return false;
         }
 
         if (!is_dir($packagePath)) {
-            $this->io->write("<warning>Package path does not exist: $packagePath.</warning>");
-            return;
+            $this->io->write("<error>Package path does not exist: $packagePath.</error>");
+            return false;
         }
 
         $targetDir = dirname($resolvedTargetPath);
         $canonicalTargetDir = $this->resolveDirectoryPath($targetDir);
         if ($canonicalTargetDir === null) {
             $this->io->write("<error>Failed to resolve target directory: $targetDir.</error>");
-            return;
+            return false;
         }
 
         // Resolve the parent, not the final symlink, so aliases share a destination key.
@@ -177,7 +187,7 @@ class SymlinkManager
         if (isset($this->destinationOwners[$destinationKey]) && $this->destinationOwners[$destinationKey] !== $packageName) {
             $owner = $this->destinationOwners[$destinationKey];
             $this->io->write("<error>Symlink collision at $resolvedTargetPath: $packageName conflicts with $owner.</error>");
-            return;
+            return false;
         }
 
         // Existing links may come from an earlier Composer run or an unrelated owner.
@@ -188,37 +198,40 @@ class SymlinkManager
                 || $this->normalizePathCase($existingSource) !== $this->normalizePathCase($expectedSource)) {
                 $existingTarget = readlink($resolvedTargetPath);
                 $this->io->write("<error>Symlink collision for $packageName at $resolvedTargetPath: existing symlink points to $existingTarget.</error>");
-                return;
+                return false;
             }
         }
 
         // Create target directory if it doesn't exist.
         if (!is_dir($targetDir)) {
-            if (!mkdir($targetDir, 0755, true)) {
+            // Report failures through IO instead of letting PHP warnings abort the pass.
+            if (!@mkdir($targetDir, 0755, true)) {
                 $this->io->write("<error>Failed to create target directory: $targetDir.</error>");
-                return;
+                return false;
             }
         }
 
         // Remove existing symlink if it exists, do not remove directories, regular files or special files (e.g. Unix sockets).
         if (is_link($resolvedTargetPath)) {
-            if (!unlink($resolvedTargetPath)) {
+            if (!@unlink($resolvedTargetPath)) {
                 $this->io->write("<error>Failed to remove existing symlink: $resolvedTargetPath.</error>");
-                return;
+                return false;
             }
         } elseif (file_exists($resolvedTargetPath)) {
             $this->io->write("<error>Target path exists and is not a symlink: $resolvedTargetPath.</error>");
-            return;
+            return false;
         }
 
         // Create the symlink
         $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $packagePath);
-        if (symlink($relativePath, $resolvedTargetPath)) {
+        if (@symlink($relativePath, $resolvedTargetPath)) {
             $this->destinationOwners[$destinationKey] = $packageName;
             $this->io->write("<info>Created symlink: $resolvedTargetPath -> $packagePath.</info>");
-        } else {
-            $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
+            return true;
         }
+
+        $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
+        return false;
     }
 
     /**

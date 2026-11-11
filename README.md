@@ -39,6 +39,11 @@ composer symlink-recreate-all
 
 This command will recreate all symlinks according to your configuration.
 
+The command returns exit code `0` when all requested links succeed or there is
+nothing to do. It returns `1` if any requested link fails, including invalid
+paths, missing source directories, destination conflicts, or filesystem errors.
+Failures are reported while the remaining packages continue to be processed.
+
 ### Destination collisions
 
 If multiple packages resolve to the same destination, the first package to

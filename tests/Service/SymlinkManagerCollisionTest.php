@@ -207,8 +207,8 @@ final class SymlinkManagerCollisionTest extends TestCase
         $installed = $this->package('other/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library']);
 
-        $manager->createSymlinkForPackage($missing);
-        $manager->createSymlinkForPackage($installed);
+        self::assertFalse($manager->createSymlinkForPackage($missing));
+        self::assertTrue($manager->createSymlinkForPackage($installed));
 
         $this->assertPackageLink('public/widget', 'other/widget');
         self::assertStringContainsString('Package path does not exist', $io->getOutput());
@@ -223,10 +223,11 @@ final class SymlinkManagerCollisionTest extends TestCase
         file_put_contents('public/widget', 'preserve me');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library']);
 
-        $manager->createSymlinkForPackage($first);
+        self::assertFalse($manager->createSymlinkForPackage($first));
+        self::assertFalse($manager->createSymlinkForPackage($first), 'Duplicate calls must retain the failed result');
         self::assertSame('preserve me', file_get_contents('public/widget'));
         unlink('public/widget');
-        $manager->createSymlinkForPackage($second);
+        self::assertTrue($manager->createSymlinkForPackage($second));
 
         $this->assertPackageLink('public/widget', 'other/widget');
         self::assertStringNotContainsString('Symlink collision', $io->getOutput());
@@ -282,9 +283,9 @@ final class SymlinkManagerCollisionTest extends TestCase
         $second = $this->package('other/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library'], [$first, $second]);
 
-        $manager->createSymlinksForAllPackages();
+        self::assertFalse($manager->createSymlinksForAllPackages());
         $this->assertPackageLink('public/widget', 'acme/widget');
-        $manager->createSymlinksForAllPackages();
+        self::assertFalse($manager->createSymlinksForAllPackages());
 
         $this->assertPackageLink('public/widget', 'acme/widget');
         self::assertSame(2, substr_count($io->getOutput(), 'Symlink collision'));
@@ -298,10 +299,46 @@ final class SymlinkManagerCollisionTest extends TestCase
         $manager->createSymlinkForPackage($first);
         unlink('public/widget');
 
-        $manager->createSymlinksForAllPackages();
+        self::assertTrue($manager->createSymlinksForAllPackages());
 
         $this->assertPackageLink('public/widget', 'other/widget');
         self::assertStringNotContainsString('Symlink collision', $io->getOutput());
+    }
+
+    public function testRecreatingAllPackagesResetsEarlierFailures(): void
+    {
+        $package = $this->package('acme/widget');
+        mkdir('public');
+        file_put_contents('public/widget', 'preserve me');
+        [$manager] = $this->manager(['public/{$name}' => 'type:library'], [$package]);
+
+        self::assertFalse($manager->createSymlinksForAllPackages());
+        unlink('public/widget');
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        self::assertTrue($manager->createSymlinkForPackage($package), 'A repeated successful package must remain successful');
+        $this->assertPackageLink('public/widget', 'acme/widget');
+    }
+
+    /**
+     * @dataProvider noOpRulesProvider
+     */
+    public function testSinglePackageReturnsSuccessWhenNoLinkIsRequested(array $rules): void
+    {
+        $package = $this->package('acme/widget', [], false);
+        [$manager] = $this->manager($rules);
+
+        self::assertTrue($manager->createSymlinkForPackage($package));
+        self::assertTrue($manager->createSymlinkForPackage($package));
+        self::assertFalse(file_exists('public'));
+    }
+
+    public static function noOpRulesProvider(): array
+    {
+        return [
+            'no configuration' => [[]],
+            'no matching rule' => [['public/{$name}' => 'vendor:other']],
+        ];
     }
 
     private function package(string $name, array $extra = [], bool $installed = true): Package

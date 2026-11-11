@@ -20,11 +20,9 @@ class SymlinkRecreateCommand extends BaseCommand
     {
         $composer = $this->getComposer();
         $io = $this->getIO();
-        
+
         // Create our own SymlinkManager instance
         $symlinkManager = new SymlinkManager($composer, $io);
-        $symlinkManager->createSymlinksForAllPackages();
-
-        return 0; // Success
+        return $symlinkManager->createSymlinksForAllPackages() ? 0 : 1;
     }
 }
