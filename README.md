@@ -25,6 +25,67 @@ Add a `symlink-paths` section to the `extra` section of your composer.json:
 }
 ```
 
+### Linking individual files and folders
+
+Use `path:vendor/package/relative/path` to link a specific file or folder from a
+package:
+
+```json
+{
+    "extra": {
+        "symlink-paths": {
+            "public/js/widget.js": "path:acme/widget/dist/widget.min.js",
+            "public/css/widget.css": "path:acme/widget/dist/widget.css",
+            "public/images/widget": "path:acme/widget/assets/images"
+        }
+    }
+}
+```
+
+Each key is the exact destination of the symlink, including a filename for a
+file link. The first two source segments identify the package; the remainder is
+relative to its actual installation directory. Multiple `path:` destinations
+can link files or folders from the same package. Destination placeholders and
+package-provided path overrides also work with these rules.
+
+Source paths must use `/` separators and nonempty segments. Absolute paths,
+`.` and `..` segments, backslashes, control characters, and `<>:"|?*{}` are
+rejected. Segments cannot end with a dot or space. Sources are literal paths;
+glob patterns and source placeholders are not supported. The selected source
+must resolve to a regular file or directory inside the package. Source symlinks
+are allowed when they resolve within the package, including packages installed
+through a symlinked path repository.
+
+### Matching and precedence
+
+- Whole-package criteria are an exact package name, `vendor:vendor`, or
+  `type:type`. Only the first matching whole-package destination is processed
+  for each package.
+- Every destination whose matching criterion is `path:` is processed, alongside
+  the first whole-package match.
+- An array of criteria uses OR matching. The first matching criterion selects
+  the source for that destination. If that source is missing, the rule reports
+  an error without trying a later criterion.
+- Valid rules for packages that are not installed are skipped.
+
+For example, alternative packages can supply a file for the same destination:
+
+```json
+{
+    "extra": {
+        "symlink-paths": {
+            "public/widget.js": [
+                "path:acme/widget/dist/widget.js",
+                "path:other/widget/dist/widget.js"
+            ]
+        }
+    }
+}
+```
+
+If both packages are installed, the destination collision is reported using the
+same rules as other symlink destinations.
+
 ## Usage
 
 The plugin automatically creates symlinks when packages are installed or updated.
@@ -50,6 +111,9 @@ The command returns exit code `0` when all requested links succeed or there is
 nothing to do. It returns `1` if any requested link fails, including invalid
 paths, missing source directories, destination conflicts, or filesystem errors.
 Failures are reported while the remaining packages continue to be processed.
+Other `path:` destinations for the same package are also processed after a
+failure. Malformed configuration is reported even when no packages are installed;
+an invalid destination rule is skipped while other valid rules are processed.
 
 ### Destination collisions
 
@@ -63,7 +127,7 @@ For example, `acme/widget` and `other/widget` collide at `public/{$name}`. Use
 `public/{$package}` to give them separate destinations.
 
 Existing symlinks are recreated only when they already resolve to the expected
-package directory. Links pointing elsewhere, including dangling links, are
+source file or directory. Links pointing elsewhere, including dangling links, are
 preserved and reported as conflicts. To intentionally change a destination's
 source, remove the conflicting link or choose another destination. Existing
 regular files, directories, and special files are also preserved and reported

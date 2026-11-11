@@ -1,6 +1,6 @@
 {
     "name": "pieceofcodero/symlink-composer-plugin",
-    "description": "Composer plugin for creating symlinks to packages in custom directories. Supports type-based, vendor-based, and name-based matching with configurable paths.",
+    "description": "Composer plugin for creating symlinks to packages, files, and folders in custom locations. Supports type-based, vendor-based, name-based, and path-based rules.",
     "type": "composer-plugin",
     "require": {
         "php": "^7.4 || ^8.0",

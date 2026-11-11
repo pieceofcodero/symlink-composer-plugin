@@ -56,15 +56,16 @@ class SymlinkManager
             return $this->processedPackages[$package->getName()];
         }
 
-        $symlinkConfig = $this->getSymlinkConfig();
+        [$symlinkConfig, $valid] = $this->getSymlinkConfig();
 
         if (empty($symlinkConfig)) {
-            return true; // No configuration, nothing to do
+            $this->processedPackages[$package->getName()] = $valid;
+            return $valid;
         }
 
         $result = $this->processPackage($package, $symlinkConfig);
-        $this->processedPackages[$package->getName()] = $result;
-        return $result;
+        $this->processedPackages[$package->getName()] = $result && $valid;
+        return $this->processedPackages[$package->getName()];
     }
 
     /**
@@ -76,21 +77,23 @@ class SymlinkManager
         $this->processedPackages = [];
         $this->destinationOwners = [];
 
-        $symlinkConfig = $this->getSymlinkConfig();
+        [$symlinkConfig, $valid] = $this->getSymlinkConfig();
 
         if (empty($symlinkConfig)) {
-            $this->io->write('<info>No symlink-paths configuration found.</info>');
-            return true;
+            if ($valid) {
+                $this->io->write('<info>No symlink-paths configuration found.</info>');
+            }
+            return $valid;
         }
 
         $this->io->write('<info>Recreating all symlinks...</info>');
 
-        $success = true;
+        $success = $valid;
         $repository = $this->composer->getRepositoryManager()->getLocalRepository();
         foreach ($repository->getPackages() as $package) {
             if ($this->shouldProcessPackage($package->getName())) {
                 $result = $this->processPackage($package, $symlinkConfig);
-                $this->processedPackages[$package->getName()] = $result;
+                $this->processedPackages[$package->getName()] = $result && $valid;
                 if (!$result) {
                     $success = false;
                 }
@@ -101,38 +104,113 @@ class SymlinkManager
     }
 
     /**
-     * Fetch symlink-paths configuration from composer.json extra section.
+     * Validate and normalize criteria before processing packages, including an empty repository.
+     *
+     * @return array{array, bool} Valid rules and whether the configuration is valid.
      */
     private function getSymlinkConfig(): array
     {
         $extra = $this->composer->getPackage()->getExtra();
-        return $extra['symlink-paths'] ?? [];
+        $config = $extra['symlink-paths'] ?? [];
+        if (!is_array($config)) {
+            $this->io->write('<error>Invalid symlink-paths configuration: expected a map of destinations to criteria.</error>');
+            return [[], false];
+        }
+
+        $rules = [];
+        $valid = true;
+        foreach ($config as $targetPath => $criteria) {
+            $targetPath = (string) $targetPath;
+            if ($targetPath === '' || strpos($targetPath, "\0") !== false) {
+                $this->io->write('<error>Invalid symlink destination: expected a nonempty path without NUL bytes.</error>');
+                $valid = false;
+                continue;
+            }
+
+            $parsedCriteria = [];
+            $ruleValid = true;
+            foreach (is_array($criteria) ? $criteria : [$criteria] as $criterion) {
+                $parsed = is_string($criterion) ? $this->parseCriterion($criterion) : null;
+                if ($parsed === null) {
+                    $kind = is_string($criterion) && strpos($criterion, 'path:') === 0 ? 'path: criterion' : 'criterion';
+                    $this->io->write("<error>Invalid $kind for destination $targetPath: expected a package name, vendor:vendor, type:type, or path:vendor/package/relative/path with a safe relative source path.</error>");
+                    $ruleValid = false;
+                    $valid = false;
+                } else {
+                    $parsedCriteria[] = $parsed;
+                }
+            }
+            if ($ruleValid) {
+                $rules[$targetPath] = $parsedCriteria;
+            }
+        }
+
+        return [$rules, $valid];
+    }
+
+    private function parseCriterion(string $criterion): ?array
+    {
+        if (strpos($criterion, 'path:') === 0) {
+            $path = substr($criterion, 5);
+            $parts = explode('/', $path, 3);
+            if (count($parts) !== 3 || !$this->isSafeRelativePath($path)
+                || !$this->isPackageName($parts[0] . '/' . $parts[1])) {
+                return null;
+            }
+            return ['package' => $parts[0] . '/' . $parts[1], 'path' => $parts[2]];
+        }
+        if (strpos($criterion, 'vendor:') === 0) {
+            return preg_match('/^[a-z0-9][a-z0-9_.-]*$/D', substr($criterion, 7)) ? ['rule' => $criterion] : null;
+        }
+        if (strpos($criterion, 'type:') === 0) {
+            return strlen($criterion) > 5 && strpos($criterion, "\0") === false ? ['rule' => $criterion] : null;
+        }
+
+        return $this->isPackageName($criterion) ? ['rule' => $criterion] : null;
+    }
+
+    private function isPackageName(string $name): bool
+    {
+        return (bool) preg_match('/^[a-z0-9][a-z0-9_.-]*\/[a-z0-9][a-z0-9_.-]*$/D', $name);
     }
 
     private function processPackage(PackageInterface $package, array $symlinkConfig): bool
     {
+        $success = true;
+        $wholePackageMatched = false;
         foreach ($symlinkConfig as $targetPath => $criteria) {
-            if ($this->shouldCreateSymlink($package, $criteria)) {
-                return $this->createSymlink($package, $targetPath);
+            $match = $this->getMatchingCriterion($package, $criteria);
+            if ($match === null) {
+                continue;
+            }
+            $relativeSource = $match['path'] ?? null;
+            if ($relativeSource === null) {
+                if ($wholePackageMatched) {
+                    continue;
+                }
+                $wholePackageMatched = true;
+            }
+            if (!$this->createSymlink($package, (string) $targetPath, $relativeSource)) {
+                $success = false;
             }
         }
 
-        return true; // No matching rule, nothing to do.
+        return $success;
     }
 
-    private function shouldCreateSymlink(PackageInterface $package, $criteria): bool
+    private function getMatchingCriterion(PackageInterface $package, array $criteria): ?array
     {
-        // Handle array of criteria.
-        if (is_array($criteria)) {
-            foreach ($criteria as $criterion) {
-                if ($this->satisfiesRule($package, $criterion)) {
-                    return true;
+        foreach ($criteria as $criterion) {
+            if (isset($criterion['package'])) {
+                if ($package->getName() === $criterion['package']) {
+                    return $criterion;
                 }
+            } elseif ($this->satisfiesRule($package, $criterion['rule'])) {
+                return $criterion;
             }
-            return false;
         }
 
-        return $this->satisfiesRule($package, $criteria);
+        return null;
     }
 
     private function satisfiesRule(PackageInterface $package, string $criterion): bool
@@ -156,7 +234,7 @@ class SymlinkManager
         return $packageName === $criterion;
     }
 
-    private function createSymlink(PackageInterface $package, string $targetPath): bool
+    private function createSymlink(PackageInterface $package, string $targetPath, ?string $relativeSource = null): bool
     {
         $packageName = $package->getName();
 
@@ -182,6 +260,14 @@ class SymlinkManager
             return false;
         }
 
+        $sourcePath = $packagePath;
+        if ($relativeSource !== null) {
+            $sourcePath = $this->resolveSourcePath($packagePath, $relativeSource);
+            if ($sourcePath === null) {
+                return false;
+            }
+        }
+
         $targetDir = dirname($resolvedTargetPath);
         $canonicalTargetDir = $this->resolveDirectoryPath($targetDir);
         if ($canonicalTargetDir === null) {
@@ -202,7 +288,7 @@ class SymlinkManager
         // Existing links may come from an earlier Composer run or an unrelated owner.
         if (is_link($resolvedTargetPath)) {
             $existingSource = realpath($resolvedTargetPath);
-            $expectedSource = realpath($packagePath);
+            $expectedSource = realpath($sourcePath);
             if ($existingSource === false || $expectedSource === false
                 || $this->normalizePathCase($existingSource) !== $this->normalizePathCase($expectedSource)) {
                 $existingTarget = readlink($resolvedTargetPath);
@@ -232,15 +318,36 @@ class SymlinkManager
         }
 
         // Create the symlink
-        $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $packagePath);
+        $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
         if (@symlink($relativePath, $resolvedTargetPath)) {
             $this->destinationOwners[$destinationKey] = $packageName;
-            $this->io->write("<info>Created symlink: $resolvedTargetPath -> $packagePath.</info>");
+            $this->io->write("<info>Created symlink: $resolvedTargetPath -> $sourcePath.</info>");
             return true;
         }
 
         $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
         return false;
+    }
+
+    private function resolveSourcePath(string $packagePath, string $relativeSource): ?string
+    {
+        $source = $packagePath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeSource);
+        $resolvedPackage = realpath($packagePath);
+        $resolvedSource = realpath($source);
+        if ($resolvedPackage === false || $resolvedSource === false) {
+            $this->io->write("<error>Source path does not exist or cannot be resolved: $source.</error>");
+            return null;
+        }
+        if (!$this->isWithinDirectory($resolvedSource, $resolvedPackage)) {
+            $this->io->write("<error>Source path escapes the package directory: $source.</error>");
+            return null;
+        }
+        if (!is_file($resolvedSource) && !is_dir($resolvedSource)) {
+            $this->io->write("<error>Source path is not a regular file or directory: $source.</error>");
+            return null;
+        }
+
+        return $resolvedSource;
     }
 
     /**
@@ -407,7 +514,7 @@ class SymlinkManager
             $relativeParts[] = $toParts[$i];
         }
 
-        return implode(DIRECTORY_SEPARATOR, $relativeParts);
+        return $relativeParts ? implode(DIRECTORY_SEPARATOR, $relativeParts) : '.';
     }
 
     private function normalizePath(string $path): string

@@ -73,6 +73,49 @@ final class SymlinkRecreateCommandTest extends TestCase
         self::assertSame(realpath('components/widget'), realpath('public/widget'));
     }
 
+    public function testCreatesMultiplePathLinksFromOnePackage(): void
+    {
+        $package = $this->package('acme/widget');
+        mkdir('vendor/acme/widget/dist');
+        mkdir('vendor/acme/widget/images');
+        file_put_contents('vendor/acme/widget/dist/widget.js', 'widget();');
+        [$tester] = $this->command([
+            'public/widget.js' => 'path:acme/widget/dist/widget.js',
+            'public/images' => 'path:acme/widget/images',
+        ], [$package]);
+
+        self::assertSame(0, $tester->execute([]));
+        self::assertTrue(is_link('public/widget.js'));
+        self::assertTrue(is_link('public/images'));
+        self::assertSame('widget();', file_get_contents('public/widget.js'));
+        self::assertSame(realpath('vendor/acme/widget/images'), realpath('public/images'));
+    }
+
+    public function testReturnsOneForMissingPathSourcesAndProcessesOtherPathsFromThePackage(): void
+    {
+        $package = $this->package('acme/widget');
+        file_put_contents('vendor/acme/widget/widget.js', 'widget();');
+        [$tester, $io] = $this->command([
+            'public/missing.js' => 'path:acme/widget/missing.js',
+            'public/widget.js' => 'path:acme/widget/widget.js',
+        ], [$package]);
+
+        self::assertSame(1, $tester->execute([]));
+        self::assertFalse(is_link('public/missing.js'));
+        self::assertTrue(is_link('public/widget.js'));
+        self::assertSame('widget();', file_get_contents('public/widget.js'));
+        self::assertStringContainsString('Source path does not exist', $io->getOutput());
+    }
+
+    public function testRejectsMalformedPathCriteriaWithoutInstalledPackages(): void
+    {
+        [$tester, $io] = $this->command(['public/widget.js' => 'path:acme/widget/../escape'], []);
+
+        self::assertSame(1, $tester->execute([]));
+        self::assertFalse(file_exists('public'));
+        self::assertStringContainsString('Invalid path: criterion', $io->getOutput());
+    }
+
     public function testReturnsOneForPackagesWithoutAnInstallationPathAndContinues(): void
     {
         $metapackage = $this->package('acme/meta', [], false);
