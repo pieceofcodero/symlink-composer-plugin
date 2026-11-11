@@ -225,9 +225,9 @@ remain compatible with that minimum even when installed using a newer PHP.
 
 GitHub Actions runs `composer validate --strict`, installs development dependencies,
 checks the actual runtime requirements with `composer check-platform-reqs`, and
-runs `composer test` on Linux with PHP 7.4 and PHP 8.0–8.5. The workflow runs on
-pushes and pull requests and can also be started manually. Each PHP version runs
-independently so a failure does not cancel the other versions.
+runs `composer test` on Linux and Windows with PHP 7.4 and PHP 8.0–8.5. The workflow
+runs on pushes and pull requests and can also be started manually. Each PHP version runs
+independently on each operating system so a failure does not cancel the other jobs.
 
 The regression suite covers package and individual-path linking, preservation of
 existing files and unrelated links, destination collisions, traversal protection,
@@ -235,4 +235,5 @@ custom installation paths, invalid configuration, and command failure reporting.
 Cleanup tests cover ownership persistence, configuration changes, package removal,
 user replacements, redirected parents, corrupt metadata, and retrying failures.
 Permission-failure tests require a non-root POSIX user; FIFO tests require the
-POSIX extension.
+POSIX extension. These tests are skipped on Windows; the remaining suite runs
+on both operating systems. The POSIX extension is requested only for Linux jobs.
