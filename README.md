@@ -180,3 +180,15 @@ through Composer, for example `composer test -- --filter RejectsInvalidMetadata`
 The suite uses PHPUnit 9.6, which runs on the minimum supported PHP version, 7.4.
 Composer resolves dependencies against PHP 7.4.0 so development dependencies
 remain compatible with that minimum even when installed using a newer PHP.
+
+GitHub Actions runs `composer validate --strict`, installs development dependencies,
+checks the actual runtime requirements with `composer check-platform-reqs`, and
+runs `composer test` on Linux with PHP 7.4 and PHP 8.0–8.5. The workflow runs on
+pushes and pull requests and can also be started manually. Each PHP version runs
+independently so a failure does not cancel the other versions.
+
+The regression suite covers package and individual-path linking, preservation of
+existing files and unrelated links, destination collisions, traversal protection,
+custom installation paths, invalid configuration, and command failure reporting.
+Permission-failure tests require a non-root POSIX user; FIFO tests require the
+POSIX extension.
