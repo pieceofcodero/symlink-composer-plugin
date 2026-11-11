@@ -39,6 +39,23 @@ composer symlink-recreate-all
 
 This command will recreate all symlinks according to your configuration.
 
+### Destination collisions
+
+If multiple packages resolve to the same destination, the first package to
+successfully create a link keeps it. Later conflicting packages are skipped with
+an error identifying both packages and the destination. This includes collisions
+caused by preferred-name overrides or equivalent paths through different parent
+symlinks, absolute paths, or dot segments.
+
+For example, `acme/widget` and `other/widget` collide at `public/{$name}`. Use
+`public/{$package}` to give them separate destinations.
+
+Existing symlinks are recreated only when they already resolve to the expected
+package directory. Links pointing elsewhere, including dangling links, are
+preserved and reported as conflicts. To intentionally change a destination's
+source, remove the conflicting link or choose another destination. Regular files
+and directories are also preserved.
+
 ## Path Placeholders
 
 The following placeholders are available for target paths:

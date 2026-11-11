@@ -222,14 +222,14 @@ final class SymlinkManagerPathValidationTest extends TestCase
         self::assertSame($before, $this->snapshot('.'), 'A dangling parent symlink must be preserved');
     }
 
-    public function testReplacesExistingFinalSymlinksWithoutFollowingThem(): void
+    public function testRecreatesExistingFinalSymlinksToTheSamePackage(): void
     {
         mkdir('public');
-        file_put_contents('keep.txt', 'preserve me');
-        symlink('../keep.txt', 'public/widget');
+        file_put_contents('vendor/acme/widget/keep.txt', 'preserve me');
+        symlink(getcwd() . '/vendor/acme/widget', 'public/widget');
         $this->createLink('public/{$name}');
         $this->assertPackageLink('public/widget');
-        self::assertSame('preserve me', file_get_contents('keep.txt'), 'The old link target must be preserved');
+        self::assertSame('preserve me', file_get_contents('vendor/acme/widget/keep.txt'), 'The link target must be preserved');
     }
 
     public function testPreservesExistingRegularDestinationFiles(): void

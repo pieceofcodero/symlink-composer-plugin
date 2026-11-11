@@ -23,6 +23,11 @@ class SymlinkManager
      */
     private $processedPackages = [];
 
+    /**
+     * @var array<string, string> Canonical destination paths mapped to package names.
+     */
+    private $destinationOwners = [];
+
     public function __construct(Composer $composer, IOInterface $io)
     {
         $this->composer = $composer;
@@ -68,6 +73,7 @@ class SymlinkManager
     {
         // Reset processed packages
         $this->processedPackages = [];
+        $this->destinationOwners = [];
 
         $vendorDir = $this->composer->getConfig()->get('vendor-dir');
         $symlinkConfig = $this->getSymlinkConfig();
@@ -157,8 +163,36 @@ class SymlinkManager
             return;
         }
 
-        // Create target directory if it doesn't exist.
         $targetDir = dirname($resolvedTargetPath);
+        $canonicalTargetDir = $this->resolveDirectoryPath($targetDir);
+        if ($canonicalTargetDir === null) {
+            $this->io->write("<error>Failed to resolve target directory: $targetDir.</error>");
+            return;
+        }
+
+        // Resolve the parent, not the final symlink, so aliases share a destination key.
+        $destinationKey = $this->normalizePathCase(
+            rtrim($canonicalTargetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . basename($resolvedTargetPath)
+        );
+        if (isset($this->destinationOwners[$destinationKey]) && $this->destinationOwners[$destinationKey] !== $packageName) {
+            $owner = $this->destinationOwners[$destinationKey];
+            $this->io->write("<error>Symlink collision at $resolvedTargetPath: $packageName conflicts with $owner.</error>");
+            return;
+        }
+
+        // Existing links may come from an earlier Composer run or an unrelated owner.
+        if (is_link($resolvedTargetPath)) {
+            $existingSource = realpath($resolvedTargetPath);
+            $expectedSource = realpath($packagePath);
+            if ($existingSource === false || $expectedSource === false
+                || $this->normalizePathCase($existingSource) !== $this->normalizePathCase($expectedSource)) {
+                $existingTarget = readlink($resolvedTargetPath);
+                $this->io->write("<error>Symlink collision for $packageName at $resolvedTargetPath: existing symlink points to $existingTarget.</error>");
+                return;
+            }
+        }
+
+        // Create target directory if it doesn't exist.
         if (!is_dir($targetDir)) {
             if (!mkdir($targetDir, 0755, true)) {
                 $this->io->write("<error>Failed to create target directory: $targetDir.</error>");
@@ -168,7 +202,10 @@ class SymlinkManager
 
         // Remove existing symlink if it exists, do not remove directories, regular files or special files (e.g. Unix sockets).
         if (is_link($resolvedTargetPath)) {
-            unlink($resolvedTargetPath);
+            if (!unlink($resolvedTargetPath)) {
+                $this->io->write("<error>Failed to remove existing symlink: $resolvedTargetPath.</error>");
+                return;
+            }
         } elseif (is_dir($resolvedTargetPath)) {
             $this->io->write("<warning>Target path exists and is not a symlink: $resolvedTargetPath.</warning>");
             return;
@@ -183,6 +220,7 @@ class SymlinkManager
         // Create the symlink
         $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $packagePath);
         if (symlink($relativePath, $resolvedTargetPath)) {
+            $this->destinationOwners[$destinationKey] = $packageName;
             $this->io->write("<info>Created symlink: $resolvedTargetPath -> $packagePath.</info>");
         } else {
             $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
@@ -293,13 +331,16 @@ class SymlinkManager
 
     private function isWithinDirectory(string $path, string $directory): bool
     {
-        if (DIRECTORY_SEPARATOR === '\\') {
-            $path = strtolower($path);
-            $directory = strtolower($directory);
-        }
+        $path = $this->normalizePathCase($path);
+        $directory = $this->normalizePathCase($directory);
 
         return $path === $directory
             || strpos($path, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0;
+    }
+
+    private function normalizePathCase(string $path): string
+    {
+        return DIRECTORY_SEPARATOR === '\\' ? strtolower($path) : $path;
     }
 
     private function getRelativePath(string $from, string $to): string
