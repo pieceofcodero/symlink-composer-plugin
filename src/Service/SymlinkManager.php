@@ -56,14 +56,13 @@ class SymlinkManager
             return $this->processedPackages[$package->getName()];
         }
 
-        $vendorDir = $this->composer->getConfig()->get('vendor-dir');
         $symlinkConfig = $this->getSymlinkConfig();
 
         if (empty($symlinkConfig)) {
             return true; // No configuration, nothing to do
         }
 
-        $result = $this->processPackage($package, $symlinkConfig, $vendorDir);
+        $result = $this->processPackage($package, $symlinkConfig);
         $this->processedPackages[$package->getName()] = $result;
         return $result;
     }
@@ -77,7 +76,6 @@ class SymlinkManager
         $this->processedPackages = [];
         $this->destinationOwners = [];
 
-        $vendorDir = $this->composer->getConfig()->get('vendor-dir');
         $symlinkConfig = $this->getSymlinkConfig();
 
         if (empty($symlinkConfig)) {
@@ -91,7 +89,7 @@ class SymlinkManager
         $repository = $this->composer->getRepositoryManager()->getLocalRepository();
         foreach ($repository->getPackages() as $package) {
             if ($this->shouldProcessPackage($package->getName())) {
-                $result = $this->processPackage($package, $symlinkConfig, $vendorDir);
+                $result = $this->processPackage($package, $symlinkConfig);
                 $this->processedPackages[$package->getName()] = $result;
                 if (!$result) {
                     $success = false;
@@ -111,11 +109,11 @@ class SymlinkManager
         return $extra['symlink-paths'] ?? [];
     }
 
-    private function processPackage(PackageInterface $package, array $symlinkConfig, string $vendorDir): bool
+    private function processPackage(PackageInterface $package, array $symlinkConfig): bool
     {
         foreach ($symlinkConfig as $targetPath => $criteria) {
             if ($this->shouldCreateSymlink($package, $criteria)) {
-                return $this->createSymlink($package, $targetPath, $vendorDir);
+                return $this->createSymlink($package, $targetPath);
             }
         }
 
@@ -158,13 +156,24 @@ class SymlinkManager
         return $packageName === $criterion;
     }
 
-    private function createSymlink(PackageInterface $package, string $targetPath, string $vendorDir): bool
+    private function createSymlink(PackageInterface $package, string $targetPath): bool
     {
         $packageName = $package->getName();
-        $packagePath = $vendorDir . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $packageName);
 
         $resolvedTargetPath = $this->resolveTargetPath($package, $targetPath);
         if ($resolvedTargetPath === null) {
+            return false;
+        }
+
+        try {
+            $packagePath = $this->composer->getInstallationManager()->getInstallPath($package);
+        } catch (\Exception $exception) {
+            $this->io->write("<error>Failed to resolve installation path for $packageName: {$exception->getMessage()}</error>");
+            return false;
+        }
+
+        if ($packagePath === null || $packagePath === '') {
+            $this->io->write("<error>Package $packageName has no installation path; cannot create symlink.</error>");
             return false;
         }
 

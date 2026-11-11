@@ -5,13 +5,19 @@ namespace Pieceofcodero\SymlinkComposerPlugin\Tests;
 use Composer\Composer;
 use Composer\Console\Application;
 use Composer\Config;
+use Composer\Downloader\DownloadManager;
 use Composer\EventDispatcher\EventDispatcher;
 use Composer\IO\BufferIO;
+use Composer\Installer\InstallationManager;
+use Composer\Installer\InstallerInterface;
+use Composer\Installer\LibraryInstaller;
+use Composer\Installer\MetapackageInstaller;
 use Composer\Package\Package;
 use Composer\Package\RootPackage;
 use Composer\Repository\InstalledArrayRepository;
 use Composer\Repository\RepositoryManager;
 use Composer\Util\ErrorHandler;
+use Composer\Util\Loop;
 use DirectoryIterator;
 use PHPUnit\Framework\TestCase;
 use Pieceofcodero\SymlinkComposerPlugin\SymlinkRecreateCommand;
@@ -47,6 +53,37 @@ final class SymlinkRecreateCommandTest extends TestCase
         self::assertSame(0, $tester->execute([]));
         self::assertTrue(is_link('public/widget'));
         self::assertSame(realpath('vendor/acme/widget'), realpath('public/widget'));
+    }
+
+    public function testReturnsZeroForCustomInstallationLocations(): void
+    {
+        $package = $this->package('acme/widget', [], false);
+        $package->setType('custom-component');
+        mkdir('components/widget', 0755, true);
+        [$tester, $io, $composer] = $this->command(['public/{$name}' => 'vendor:acme'], [$package]);
+        $installer = $this->createStub(InstallerInterface::class);
+        $installer->method('supports')->willReturnCallback(function ($type): bool {
+            return $type === 'custom-component';
+        });
+        $installer->method('getInstallPath')->willReturn('components/widget');
+        $composer->getInstallationManager()->addInstaller($installer);
+
+        self::assertSame(0, $tester->execute([]));
+        self::assertTrue(is_link('public/widget'));
+        self::assertSame(realpath('components/widget'), realpath('public/widget'));
+    }
+
+    public function testReturnsOneForPackagesWithoutAnInstallationPathAndContinues(): void
+    {
+        $metapackage = $this->package('acme/meta', [], false);
+        $metapackage->setType('metapackage');
+        $good = $this->package('acme/good');
+        [$tester, $io] = $this->command(['public/{$name}' => 'vendor:acme'], [$metapackage, $good]);
+
+        self::assertSame(1, $tester->execute([]));
+        self::assertFalse(is_link('public/meta'));
+        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        self::assertStringContainsString('Package acme/meta has no installation path', $io->getOutput());
     }
 
     /**
@@ -252,6 +289,11 @@ final class SymlinkRecreateCommandTest extends TestCase
         $repositoryManager->method('getLocalRepository')->willReturn(new InstalledArrayRepository($packages));
         $composer->setRepositoryManager($repositoryManager);
         $io = new BufferIO();
+        $composer->setDownloadManager($this->createStub(DownloadManager::class));
+        $installationManager = new InstallationManager($this->createStub(Loop::class), $io);
+        $installationManager->addInstaller(new LibraryInstaller($io, $composer));
+        $installationManager->addInstaller(new MetapackageInstaller($io));
+        $composer->setInstallationManager($installationManager);
         $composer->setEventDispatcher(new EventDispatcher($composer, $io));
 
         $command = new SymlinkRecreateCommand();
@@ -260,7 +302,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         $application = new Application();
         $application->add($command);
 
-        return [new CommandTester($command), $io];
+        return [new CommandTester($command), $io, $composer];
     }
 
     private function removeFixture(string $path): void

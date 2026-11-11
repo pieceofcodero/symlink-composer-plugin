@@ -4,12 +4,16 @@ namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
 use Composer\Composer;
 use Composer\Config;
+use Composer\Downloader\DownloadManager;
 use Composer\IO\BufferIO;
 use Composer\IO\IOInterface;
+use Composer\Installer\InstallationManager;
+use Composer\Installer\LibraryInstaller;
 use Composer\Package\Package;
 use Composer\Package\RootPackage;
 use Composer\Repository\InstalledArrayRepository;
 use Composer\Repository\RepositoryManager;
+use Composer\Util\Loop;
 use DirectoryIterator;
 use PHPUnit\Framework\TestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
@@ -366,6 +370,10 @@ final class SymlinkManagerCollisionTest extends TestCase
         $composer->setRepositoryManager($repositoryManager);
 
         $io = $io ?? new BufferIO();
+        $composer->setDownloadManager($this->createStub(DownloadManager::class));
+        $installationManager = new InstallationManager($this->createStub(Loop::class), $io);
+        $installationManager->addInstaller(new LibraryInstaller($io, $composer));
+        $composer->setInstallationManager($installationManager);
         return [new SymlinkManager($composer, $io), $io];
     }
 

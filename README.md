@@ -29,6 +29,13 @@ Add a `symlink-paths` section to the `extra` section of your composer.json:
 
 The plugin automatically creates symlinks when packages are installed or updated.
 
+Source directories come from Composer's installation manager. Custom installer
+locations, custom vendor directories, legacy `target-dir` values, and symlinked
+path-repository packages are supported without extra plugin configuration.
+Matched packages without an installation directory, including metapackages,
+are reported as errors. Missing directories and installer lookup failures are
+also reported as errors while remaining packages continue to be processed.
+
 ### Recreating all symlinks
 
 If you need to recreate all symlinks (for example, after changing the configuration), use the dedicated command:

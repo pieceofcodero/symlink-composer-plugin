@@ -4,9 +4,13 @@ namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
 use Composer\Composer;
 use Composer\Config;
+use Composer\Downloader\DownloadManager;
 use Composer\IO\BufferIO;
+use Composer\Installer\InstallationManager;
+use Composer\Installer\LibraryInstaller;
 use Composer\Package\Package;
 use Composer\Package\RootPackage;
+use Composer\Util\Loop;
 use DirectoryIterator;
 use PHPUnit\Framework\TestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
@@ -254,6 +258,10 @@ final class SymlinkManagerPathValidationTest extends TestCase
         $package = new Package('acme/widget', '1.0.0.0', '1.0.0');
         $package->setExtra($extra);
         $io = new BufferIO();
+        $composer->setDownloadManager($this->createStub(DownloadManager::class));
+        $installationManager = new InstallationManager($this->createStub(Loop::class), $io);
+        $installationManager->addInstaller(new LibraryInstaller($io, $composer));
+        $composer->setInstallationManager($installationManager);
         $manager = new SymlinkManager($composer, $io);
         $manager->createSymlinkForPackage($package);
 
