@@ -206,14 +206,8 @@ class SymlinkManager
                 $this->io->write("<error>Failed to remove existing symlink: $resolvedTargetPath.</error>");
                 return;
             }
-        } elseif (is_dir($resolvedTargetPath)) {
-            $this->io->write("<warning>Target path exists and is not a symlink: $resolvedTargetPath.</warning>");
-            return;
-        } elseif (is_file($resolvedTargetPath)) {
-            $this->io->write("<warning>Target path exists and is not a symlink: $resolvedTargetPath.</warning>");
-            return;
         } elseif (file_exists($resolvedTargetPath)) {
-            $this->io->write("<warning>Target path exists and is not a symlink: $resolvedTargetPath.</warning>");
+            $this->io->write("<error>Target path exists and is not a symlink: $resolvedTargetPath.</error>");
             return;
         }
 

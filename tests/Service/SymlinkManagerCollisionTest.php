@@ -5,6 +5,7 @@ namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 use Composer\Composer;
 use Composer\Config;
 use Composer\IO\BufferIO;
+use Composer\IO\IOInterface;
 use Composer\Package\Package;
 use Composer\Package\RootPackage;
 use Composer\Repository\InstalledArrayRepository;
@@ -231,6 +232,50 @@ final class SymlinkManagerCollisionTest extends TestCase
         self::assertStringNotContainsString('Symlink collision', $io->getOutput());
     }
 
+    /**
+     * @dataProvider nonSymlinkDestinationProvider
+     */
+    public function testReportsExistingNonSymlinkDestinationsAsErrors(string $type): void
+    {
+        if ($type === 'fifo' && !function_exists('posix_mkfifo')) {
+            self::markTestSkipped('FIFO creation requires the POSIX extension.');
+        }
+
+        $package = $this->package('acme/widget');
+        mkdir('public');
+        if ($type === 'directory') {
+            mkdir('public/widget');
+            file_put_contents('public/widget/keep.txt', 'preserve me');
+        } elseif ($type === 'fifo') {
+            self::assertTrue(posix_mkfifo('public/widget', 0600));
+        } else {
+            file_put_contents('public/widget', 'preserve me');
+        }
+        $originalDestination = lstat('public/widget');
+        $io = $this->createMock(IOInterface::class);
+        $io->expects(self::once())->method('write')->with(self::stringContains('<error>'));
+        [$manager] = $this->manager(['public/{$name}' => 'type:library'], [], $io);
+
+        $manager->createSymlinkForPackage($package);
+
+        self::assertFalse(is_link('public/widget'));
+        self::assertSame($type === 'directory' ? 'dir' : $type, filetype('public/widget'));
+        self::assertSame($originalDestination, lstat('public/widget'), 'The existing destination must be preserved');
+        if ($type !== 'fifo') {
+            $file = $type === 'directory' ? 'public/widget/keep.txt' : 'public/widget';
+            self::assertSame('preserve me', file_get_contents($file));
+        }
+    }
+
+    public static function nonSymlinkDestinationProvider(): array
+    {
+        return [
+            'regular file' => ['file'],
+            'directory' => ['directory'],
+            'special file' => ['fifo'],
+        ];
+    }
+
     public function testRecreatingAllPackagesPreservesTheFirstLinkOnEveryPass(): void
     {
         $first = $this->package('acme/widget');
@@ -269,7 +314,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         return $package;
     }
 
-    private function manager(array $rules, array $packages = []): array
+    private function manager(array $rules, array $packages = [], ?IOInterface $io = null): array
     {
         $composer = new Composer();
         $config = new Config(false, getcwd());
@@ -283,7 +328,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         $repositoryManager->method('getLocalRepository')->willReturn(new InstalledArrayRepository($packages));
         $composer->setRepositoryManager($repositoryManager);
 
-        $io = new BufferIO();
+        $io = $io ?? new BufferIO();
         return [new SymlinkManager($composer, $io), $io];
     }
 

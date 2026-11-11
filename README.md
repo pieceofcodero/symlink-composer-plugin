@@ -53,8 +53,9 @@ For example, `acme/widget` and `other/widget` collide at `public/{$name}`. Use
 Existing symlinks are recreated only when they already resolve to the expected
 package directory. Links pointing elsewhere, including dangling links, are
 preserved and reported as conflicts. To intentionally change a destination's
-source, remove the conflicting link or choose another destination. Regular files
-and directories are also preserved.
+source, remove the conflicting link or choose another destination. Existing
+regular files, directories, and special files are also preserved and reported
+as errors.
 
 ## Path Placeholders
 
