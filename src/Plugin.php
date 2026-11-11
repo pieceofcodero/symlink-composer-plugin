@@ -10,6 +10,9 @@ use Composer\Installer\PackageEvent;
 use Composer\Installer\PackageEvents;
 use Composer\DependencyResolver\Operation\InstallOperation;
 use Composer\DependencyResolver\Operation\UpdateOperation;
+use Composer\DependencyResolver\Operation\UninstallOperation;
+use Composer\Script\Event;
+use Composer\Script\ScriptEvents;
 use Composer\Plugin\Capability\CommandProvider as CommandProviderCapability;
 use Composer\Plugin\Capable;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
@@ -42,6 +45,9 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
         return [
             PackageEvents::POST_PACKAGE_INSTALL => 'onPackageInstalled',
             PackageEvents::POST_PACKAGE_UPDATE => 'onPackageUpdated',
+            PackageEvents::POST_PACKAGE_UNINSTALL => 'onPackageUninstalled',
+            ScriptEvents::POST_INSTALL_CMD => 'onComposerFinished',
+            ScriptEvents::POST_UPDATE_CMD => 'onComposerFinished',
         ];
     }
 
@@ -68,6 +74,23 @@ class Plugin implements PluginInterface, EventSubscriberInterface, Capable
         if ($operation instanceof UpdateOperation) {
             $package = $operation->getTargetPackage();
             $this->symlinkManager->createSymlinkForPackage($package);
+        }
+    }
+
+    public function onPackageUninstalled(PackageEvent $event): void
+    {
+        $operation = $event->getOperation();
+        if ($operation instanceof UninstallOperation
+            && !$this->symlinkManager->removeSymlinksForPackage($operation->getPackage())) {
+            throw new \RuntimeException('Failed to clean up package symlinks; see the errors above.');
+        }
+    }
+
+    /** Reconcile configuration changes even when no package operations were needed. */
+    public function onComposerFinished(Event $event): void
+    {
+        if (!$this->symlinkManager->createSymlinksForAllPackages()) {
+            throw new \RuntimeException('Failed to reconcile package symlinks; see the errors above.');
         }
     }
 }

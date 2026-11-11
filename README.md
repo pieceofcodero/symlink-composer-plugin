@@ -89,6 +89,9 @@ same rules as other symlink destinations.
 ## Usage
 
 The plugin automatically creates symlinks when packages are installed or updated.
+It removes unchanged plugin-owned links when packages are uninstalled and
+reconciles configuration changes at the end of `composer install` and
+`composer update`, even when no packages needed installation or updating.
 
 Source directories come from Composer's installation manager. Custom installer
 locations, custom vendor directories, legacy `target-dir` values, and symlinked
@@ -105,11 +108,13 @@ If you need to recreate all symlinks (for example, after changing the configurat
 composer symlink-recreate-all
 ```
 
-This command will recreate all symlinks according to your configuration.
+This command recreates all symlinks according to your configuration and cleans
+up obsolete plugin-owned links.
 
 The command returns exit code `0` when all requested links succeed or there is
 nothing to do. It returns `1` if any requested link fails, including invalid
-paths, missing source directories, destination conflicts, or filesystem errors.
+paths, missing source directories, destination conflicts, ownership metadata
+errors, or filesystem errors during creation or cleanup.
 Failures are reported while the remaining packages continue to be processed.
 Other `path:` destinations for the same package are also processed after a
 failure. Malformed configuration is reported even when no packages are installed;
@@ -126,12 +131,49 @@ symlinks, absolute paths, or dot segments.
 For example, `acme/widget` and `other/widget` collide at `public/{$name}`. Use
 `public/{$package}` to give them separate destinations.
 
-Existing symlinks are recreated only when they already resolve to the expected
-source file or directory. Links pointing elsewhere, including dangling links, are
-preserved and reported as conflicts. To intentionally change a destination's
+Existing symlinks are recreated when they already resolve to the expected source
+file or directory. An unchanged link recorded as owned by the same package can
+also be updated to a new source, including when its previous source no longer
+exists. Other links pointing elsewhere, including dangling links, are preserved
+and reported as conflicts. To intentionally change an unowned destination's
 source, remove the conflicting link or choose another destination. Existing
 regular files, directories, and special files are also preserved and reported
 as errors.
+
+### Cleaning up stale links
+
+The plugin records links it successfully creates or recreates in
+`<vendor-dir>/composer/symlink-composer-plugin.json`. The record includes the
+canonical destination, package name, exact symlink target, and filesystem
+identity. The configured vendor directory is used, including custom locations.
+Access to the record is locked, and updates replace the metadata file atomically.
+
+When a package is removed, only its recorded links are considered for deletion.
+After a successful package reconfiguration, obsolete destinations for that
+package are removed. A full reconciliation also cleans up links belonging to
+packages that are no longer installed. Removing all `symlink-paths` rules
+cleans up all unchanged recorded links. Parent directories are left in place.
+
+A link is removed only if its identity and target still match the ownership
+record and its parent still resolves to the recorded directory. This also
+allows removal of owned dangling links. Replaced links, regular files,
+directories, unrelated links, and destinations under redirected parents are
+preserved; obsolete ownership records for them are forgotten. Links created
+before ownership tracking are left in place until a successful recreation
+records them.
+
+If any requested link for a package fails, that package's obsolete links are
+kept for a retry. Invalid root configuration suppresses obsolete-link cleanup
+while valid rules continue to run. Cleanup failures retain the affected records
+and cause `symlink-recreate-all` to return `1`. Automatic reconciliation also
+reports failures to Composer through an exception.
+
+The ownership file is local project state; do not commit or edit it. Missing
+metadata means existing links cannot be identified for cleanup. Invalid,
+unwritable, or symlinked metadata files stop processing with an error and preserve
+existing destinations. The record is scoped to the project's absolute directory;
+after moving or copying a project, remove the old ownership file to reset tracking,
+then run `composer symlink-recreate-all`. Unrecorded old links remain untouched.
 
 ## Path Placeholders
 
@@ -190,5 +232,7 @@ independently so a failure does not cancel the other versions.
 The regression suite covers package and individual-path linking, preservation of
 existing files and unrelated links, destination collisions, traversal protection,
 custom installation paths, invalid configuration, and command failure reporting.
+Cleanup tests cover ownership persistence, configuration changes, package removal,
+user replacements, redirected parents, corrupt metadata, and retrying failures.
 Permission-failure tests require a non-root POSIX user; FIFO tests require the
 POSIX extension.

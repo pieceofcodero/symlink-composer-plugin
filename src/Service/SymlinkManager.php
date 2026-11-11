@@ -28,10 +28,17 @@ class SymlinkManager
      */
     private $destinationOwners = [];
 
+    /** @var LinkRegistry */
+    private $registry;
+
+    /** @var array<string, bool> Destinations successfully requested in the current pass. */
+    private $activeDestinations = [];
+
     public function __construct(Composer $composer, IOInterface $io)
     {
         $this->composer = $composer;
         $this->io = $io;
+        $this->registry = new LinkRegistry($composer->getConfig()->get('vendor-dir'), $io);
     }
 
     /**
@@ -58,13 +65,19 @@ class SymlinkManager
 
         [$symlinkConfig, $valid] = $this->getSymlinkConfig();
 
-        if (empty($symlinkConfig)) {
-            $this->processedPackages[$package->getName()] = $valid;
-            return $valid;
+        $this->activeDestinations = [];
+        $success = false;
+        try {
+            if ($this->registry->open()) {
+                $success = $this->processPackage($package, $symlinkConfig) && $valid;
+                if ($success) {
+                    $success = $this->registry->cleanup($this->activeDestinations, [], $package->getName());
+                }
+            }
+        } finally {
+            $saved = $this->registry->close();
         }
-
-        $result = $this->processPackage($package, $symlinkConfig);
-        $this->processedPackages[$package->getName()] = $result && $valid;
+        $this->processedPackages[$package->getName()] = $success && $saved;
         return $this->processedPackages[$package->getName()];
     }
 
@@ -76,31 +89,69 @@ class SymlinkManager
         // Reset processed packages
         $this->processedPackages = [];
         $this->destinationOwners = [];
+        $this->activeDestinations = [];
 
         [$symlinkConfig, $valid] = $this->getSymlinkConfig();
-
-        if (empty($symlinkConfig)) {
-            if ($valid) {
-                $this->io->write('<info>No symlink-paths configuration found.</info>');
-            }
-            return $valid;
-        }
-
-        $this->io->write('<info>Recreating all symlinks...</info>');
-
         $success = $valid;
-        $repository = $this->composer->getRepositoryManager()->getLocalRepository();
-        foreach ($repository->getPackages() as $package) {
-            if ($this->shouldProcessPackage($package->getName())) {
-                $result = $this->processPackage($package, $symlinkConfig);
-                $this->processedPackages[$package->getName()] = $result && $valid;
-                if (!$result) {
+        try {
+            if (!$this->registry->open()) {
+                $success = false;
+            } elseif (empty($symlinkConfig)) {
+                if ($valid) {
+                    $success = $this->registry->cleanup([]);
+                }
+            } else {
+                $this->io->write('<info>Recreating all symlinks...</info>');
+                $packages = $this->composer->getRepositoryManager()->getLocalRepository()->getPackages();
+                $installed = [];
+                foreach ($packages as $package) {
+                    $installed[$package->getName()] = true;
+                }
+                // Removed packages must release destinations before new packages claim them.
+                if ($valid && !$this->registry->cleanup([], $installed)) {
+                    $success = false;
+                }
+                $failed = [];
+                foreach ($packages as $package) {
+                    if (!$this->shouldProcessPackage($package->getName())) {
+                        continue;
+                    }
+                    $result = $this->processPackage($package, $symlinkConfig);
+                    $this->processedPackages[$package->getName()] = $result && $valid;
+                    if (!$result) {
+                        $failed[$package->getName()] = true;
+                        $success = false;
+                    }
+                }
+                if ($valid && !$this->registry->cleanup($this->activeDestinations, $failed)) {
                     $success = false;
                 }
             }
+            if (empty($symlinkConfig) && $valid) {
+                $this->io->write('<info>No symlink-paths configuration found.</info>');
+            }
+        } finally {
+            $saved = $this->registry->close();
         }
+        return $success && $saved;
+    }
 
-        return $success;
+    /** Remove only unchanged, recorded links belonging to an uninstalled package. */
+    public function removeSymlinksForPackage(PackageInterface $package): bool
+    {
+        $success = false;
+        try {
+            if ($this->registry->open()) {
+                $success = $this->registry->cleanup([], [], $package->getName());
+            }
+        } finally {
+            $saved = $this->registry->close();
+        }
+        unset($this->processedPackages[$package->getName()]);
+        $this->destinationOwners = array_filter($this->destinationOwners, function ($owner) use ($package): bool {
+            return $owner !== $package->getName();
+        });
+        return $success && $saved;
     }
 
     /**
@@ -279,14 +330,23 @@ class SymlinkManager
         $destinationKey = $this->normalizePathCase(
             rtrim($canonicalTargetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . basename($resolvedTargetPath)
         );
+        if (!$this->registry->prepare()) {
+            return false;
+        }
         if (isset($this->destinationOwners[$destinationKey]) && $this->destinationOwners[$destinationKey] !== $packageName) {
             $owner = $this->destinationOwners[$destinationKey];
             $this->io->write("<error>Symlink collision at $resolvedTargetPath: $packageName conflicts with $owner.</error>");
             return false;
         }
+        $recordedOwner = $this->registry->owner($destinationKey);
+        if ($recordedOwner !== null && $recordedOwner !== $packageName) {
+            $this->io->write("<error>Symlink collision at $resolvedTargetPath: $packageName conflicts with $recordedOwner.</error>");
+            return false;
+        }
 
         // Existing links may come from an earlier Composer run or an unrelated owner.
-        if (is_link($resolvedTargetPath)) {
+        if (is_link($resolvedTargetPath) && (isset($this->activeDestinations[$destinationKey])
+            || !$this->registry->owns($destinationKey, $packageName))) {
             $existingSource = realpath($resolvedTargetPath);
             $expectedSource = realpath($sourcePath);
             if ($existingSource === false || $expectedSource === false
@@ -321,8 +381,9 @@ class SymlinkManager
         $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
         if (@symlink($relativePath, $resolvedTargetPath)) {
             $this->destinationOwners[$destinationKey] = $packageName;
+            $this->activeDestinations[$destinationKey] = true;
             $this->io->write("<info>Created symlink: $resolvedTargetPath -> $sourcePath.</info>");
-            return true;
+            return $this->registry->record($destinationKey, $packageName);
         }
 
         $this->io->write("<error>Failed to create symlink: $resolvedTargetPath.</error>");
