@@ -185,7 +185,7 @@ class SymlinkManager
                 $parsed = is_string($criterion) ? $this->parseCriterion($criterion) : null;
                 if ($parsed === null) {
                     $kind = is_string($criterion) && strpos($criterion, 'path:') === 0 ? 'path: criterion' : 'criterion';
-                    $this->io->write("<error>Invalid $kind for destination $targetPath: expected a package name, vendor:vendor, type:type, or path:vendor/package/relative/path with a safe relative source path.</error>");
+                    $this->io->write("<error>Invalid $kind for destination $targetPath: expected vendor/package (optionally prefixed with package:), vendor:vendor, type:type, or vendor/package/relative/path (optionally prefixed with path:) with a safe relative source path.</error>");
                     $ruleValid = false;
                     $valid = false;
                 } else {
@@ -221,8 +221,19 @@ class SymlinkManager
 
     private function parseCriterion(string $criterion): ?array
     {
-        if (strpos($criterion, 'path:') === 0) {
-            $path = substr($criterion, 5);
+        if (strpos($criterion, 'vendor:') === 0) {
+            return preg_match('/^[a-z0-9][a-z0-9_.-]*$/D', substr($criterion, 7)) ? ['rule' => $criterion] : null;
+        }
+        if (strpos($criterion, 'type:') === 0) {
+            return strlen($criterion) > 5 && strpos($criterion, "\0") === false ? ['rule' => $criterion] : null;
+        }
+        if (strpos($criterion, 'package:') === 0) {
+            return $this->isPackageName(substr($criterion, 8)) ? ['rule' => $criterion] : null;
+        }
+
+        $explicitPath = strpos($criterion, 'path:') === 0;
+        if ($explicitPath || substr_count($criterion, '/') >= 2) {
+            $path = $explicitPath ? substr($criterion, 5) : $criterion;
             $parts = explode('/', $path, 3);
             if (count($parts) !== 3 || !$this->isValidConfiguredRelativePath($path)
                 || !$this->isPackageName($parts[0] . '/' . $parts[1])) {
@@ -230,13 +241,6 @@ class SymlinkManager
             }
             return ['package' => $parts[0] . '/' . $parts[1], 'path' => $parts[2]];
         }
-        if (strpos($criterion, 'vendor:') === 0) {
-            return preg_match('/^[a-z0-9][a-z0-9_.-]*$/D', substr($criterion, 7)) ? ['rule' => $criterion] : null;
-        }
-        if (strpos($criterion, 'type:') === 0) {
-            return strlen($criterion) > 5 && strpos($criterion, "\0") === false ? ['rule' => $criterion] : null;
-        }
-
         return $this->isPackageName($criterion) ? ['rule' => $criterion] : null;
     }
 
@@ -302,6 +306,9 @@ class SymlinkManager
         }
 
         // Match by exact package name.
+        if (strpos($criterion, 'package:') === 0) {
+            $criterion = substr($criterion, 8);
+        }
         return $packageName === $criterion;
     }
 

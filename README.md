@@ -49,17 +49,31 @@ Add a `symlink-paths` section to the `extra` section of your composer.json:
 }
 ```
 
+Exact package names and package-relative paths accept optional prefixes:
+
+| Source | Short form | Explicit form |
+| --- | --- | --- |
+| Whole package | `acme/widget` | `package:acme/widget` |
+| File or folder within a package | `acme/widget/dist/widget.js` | `path:acme/widget/dist/widget.js` |
+
+Without a prefix, two slash-separated components identify a package; additional
+components identify a path inside that package. Both forms have identical
+matching and validation behavior. `package:` accepts only a package name, and
+`path:` requires a nonempty relative source path. The `vendor:` and `type:`
+prefixes remain required for their selectors; slashes in a `type:` value are
+part of that type.
+
 ### Linking individual files and folders
 
-Use `path:vendor/package/relative/path` to link a specific file or folder from a
-package:
+Use `vendor/package/relative/path`, optionally prefixed with `path:`, to link a
+specific file or folder from a package:
 
 ```json
 {
     "extra": {
         "symlink-paths": {
             "public/js/widget.js": "path:acme/widget/dist/widget.min.js",
-            "public/css/widget.css": "path:acme/widget/dist/widget.css",
+            "public/css/widget.css": "acme/widget/dist/widget.css",
             "public/images/widget": "path:acme/widget/assets/images"
         }
     }
@@ -68,9 +82,9 @@ package:
 
 Each key is the exact destination of the symlink, including a filename for a
 file link. The first two source segments identify the package; the remainder is
-relative to its actual installation directory. Multiple `path:` destinations
-can link files or folders from the same package. Destination placeholders and
-package-provided path overrides also work with these rules.
+relative to its actual installation directory. Multiple package-relative path
+destinations can link files or folders from the same package. Destination
+placeholders and package-provided path overrides also work with these rules.
 
 Source paths must use `/` separators and nonempty segments. Absolute paths,
 `.` and `..` segments, backslashes, control characters, and `<>:"|?*{}` are
@@ -82,19 +96,20 @@ through a symlinked path repository.
 
 ### Matching and precedence
 
-- Whole-package criteria are an exact package name, `vendor:vendor`, or
-  `type:type`. Only the first matching whole-package destination is processed
-  for each package.
-- Every destination whose matching criterion is `path:` is processed, alongside
-  the first whole-package match.
+- Whole-package criteria are an exact package name (optionally prefixed with
+  `package:`), `vendor:vendor`, or `type:type`. Only the first matching
+  whole-package destination is processed for each package.
+- Every destination whose matching criterion is a package-relative path (with
+  or without `path:`) is processed, alongside the first whole-package match.
 - An array of criteria uses OR matching. The first matching criterion selects
   the source for that destination. If that source is missing, the rule reports
   an error without trying a later criterion.
 - Each destination rule with no installed package matching any of its criteria
   emits one warning identifying the destination and criteria during full
-  reconciliation, including `symlink-recreate-all`. This applies to `path:`,
-  exact package names, `vendor:`, and `type:`. Any matching alternative in an
-  array suppresses the warning. Candidates are checked before destination
+  reconciliation, including `symlink-recreate-all`. This applies to package-relative
+  paths, exact package names, `vendor:`, and `type:`, including both optional
+  prefix forms. Any matching alternative in an array suppresses the warning.
+  Candidates are checked before destination
   precedence; missing source files in matching packages still produce errors.
   Unmatched rules are skipped, and these warnings do not fail the command.
 
@@ -146,9 +161,10 @@ nothing to do. It returns `1` if any requested link fails, including invalid
 paths, missing source directories, destination conflicts, ownership metadata
 errors, or filesystem errors during creation or cleanup.
 Failures are reported while the remaining packages continue to be processed.
-Other `path:` destinations for the same package are also processed after a
-failure. Malformed configuration is reported even when no packages are installed;
-an invalid destination rule is skipped while other valid rules are processed.
+Other package-relative path destinations for the same package are also processed
+after a failure. Malformed configuration is reported even when no packages are
+installed; an invalid destination rule is skipped while other valid rules are
+processed.
 
 ### Destination collisions
 

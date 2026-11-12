@@ -48,9 +48,9 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
     /**
      * @dataProvider sourceProvider
      */
-    public function testLinksFilesAndDirectories(string $source, string $destination): void
+    public function testLinksFilesAndDirectories(string $source, string $destination, string $prefix): void
     {
-        [$manager] = $this->manager([$destination => 'path:acme/widget/' . $source]);
+        [$manager] = $this->manager([$destination => $prefix . 'acme/widget/' . $source]);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
         $this->assertSourceLink($destination, 'vendor/acme/widget/' . $source);
@@ -58,17 +58,65 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
 
     public static function sourceProvider(): array
     {
-        return [
+        $sources = [
             'file with a custom destination name' => ['dist/widget.js', 'public/js/renamed.js'],
             'directory' => ['assets/images', 'public/images/widget'],
+            'top-level directory' => ['dist', 'public/dist'],
         ];
+        $cases = [];
+        foreach ($sources as $name => $source) {
+            $cases[$name . ' with prefix'] = array_merge($source, ['path:']);
+            $cases[$name . ' without prefix'] = array_merge($source, ['']);
+        }
+        return $cases;
+    }
+
+    /**
+     * @dataProvider packageCriterionProvider
+     */
+    public function testExactPackageFormsMatchOnlyTheNamedPackage(string $criterion): void
+    {
+        mkdir('vendor/acme/gadget', 0755, true);
+        $packages = [new Package('acme/widget', '1.0.0.0', '1.0.0'), new Package('acme/gadget', '1.0.0.0', '1.0.0')];
+        [$manager, $io] = $this->manager([
+            'whole/{$name}' => $criterion,
+            'second-whole/{$name}' => $criterion,
+            'public/widget.js' => 'acme/widget/dist/widget.js',
+        ], $packages);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        $this->assertSourceLink('whole/widget', 'vendor/acme/widget');
+        $this->assertSourceLink('public/widget.js', 'vendor/acme/widget/dist/widget.js');
+        self::assertFalse(file_exists('whole/gadget'));
+        self::assertFalse(file_exists('second-whole'));
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
+    }
+
+    public static function packageCriterionProvider(): array
+    {
+        return ['without prefix' => ['acme/widget'], 'with prefix' => ['package:acme/widget']];
+    }
+
+    public function testTypeValuesWithSlashesRemainTypeSelectors(): void
+    {
+        $package = new Package('acme/widget', '1.0.0.0', '1.0.0');
+        $package->setType('custom/component/widget');
+        $installer = $this->createStub(InstallerInterface::class);
+        $installer->method('supports')->willReturn(true);
+        $installer->method('getInstallPath')->willReturn('vendor/acme/widget');
+        [$manager, $io, $composer] = $this->manager(['whole/widget' => 'type:custom/component/widget'], [$package]);
+        $composer->getInstallationManager()->addInstaller($installer);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        $this->assertSourceLink('whole/widget', 'vendor/acme/widget');
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
     }
 
     public function testCreatesEveryExplicitPathForTheSamePackage(): void
     {
         [$manager] = $this->manager([
             'public/widget.js' => 'path:acme/widget/dist/widget.js',
-            'public/widget.css' => 'path:acme/widget/dist/widget.css',
+            'public/widget.css' => 'acme/widget/dist/widget.css',
             'public/images' => 'path:acme/widget/assets/images',
         ]);
 
@@ -106,7 +154,7 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
         [$manager] = $this->manager([
             'public/widget.js' => [
                 'path:other/widget/dist/missing.js',
-                'path:acme/widget/dist/widget.js',
+                'acme/widget/dist/widget.js',
                 'path:acme/widget/dist/widget.css',
             ],
             'whole/{$name}' => ['vendor:other', 'type:library'],
@@ -174,7 +222,9 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
         $cases = [];
         foreach ([
             'path' => 'path:other/widget/dist/widget.js',
+            'unprefixed path' => 'other/widget/dist/widget.js',
             'package' => 'other/widget',
+            'prefixed package' => 'package:other/widget',
             'vendor' => 'vendor:other',
             'type' => 'type:component',
             'alternatives' => ['path:other/widget/dist/widget.js', 'other/widget', 'vendor:other', 'type:component'],
@@ -201,7 +251,7 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
     public static function matchingAlternativeProvider(): array
     {
         $cases = [];
-        foreach (['path:acme/widget/dist/widget.js', 'acme/widget', 'vendor:acme', 'type:library'] as $criterion) {
+        foreach (['path:acme/widget/dist/widget.js', 'acme/widget/dist/widget.js', 'acme/widget', 'package:acme/widget', 'vendor:acme', 'type:library'] as $criterion) {
             $cases[$criterion . ' first'] = [[$criterion, 'path:other/widget/missing.js']];
             $cases[$criterion . ' last'] = [['path:other/widget/missing.js', $criterion]];
         }
@@ -278,7 +328,8 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
 
         self::assertFalse($manager->createSymlinksForAllPackages());
         self::assertFalse(file_exists('public'));
-        self::assertStringContainsString('Invalid path: criterion', $io->getOutput());
+        $kind = strpos($specifier, 'path:') === 0 ? 'path: criterion' : 'criterion';
+        self::assertStringContainsString('Invalid ' . $kind, $io->getOutput());
     }
 
     /**
@@ -301,7 +352,7 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
     /**
      * @dataProvider escapingSymlinkProvider
      */
-    public function testRejectsSourcesThatEscapeThroughSymlinks(string $target, bool $directory): void
+    public function testRejectsSourcesThatEscapeThroughSymlinks(string $target, bool $directory, string $prefix): void
     {
         mkdir(dirname($target), 0755, true);
         if ($directory) {
@@ -311,7 +362,7 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
         }
         $this->createFixtureLink(getcwd() . '/' . $target, 'vendor/acme/widget/alias');
         [$manager, $io] = $this->manager([
-            'public/invalid' => 'path:acme/widget/alias',
+            'public/invalid' => $prefix . 'acme/widget/alias',
             'public/widget.js' => 'path:acme/widget/dist/widget.js',
         ]);
 
@@ -326,11 +377,17 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
 
     public static function escapingSymlinkProvider(): array
     {
-        return [
+        $sources = [
             'external file' => ['outside/secret.txt', false],
             'external directory' => ['outside/assets', true],
             'sibling sharing the package prefix' => ['vendor/acme/widget-sibling/secret.txt', false],
         ];
+        $cases = [];
+        foreach ($sources as $name => $source) {
+            $cases[$name . ' with prefix'] = array_merge($source, ['path:']);
+            $cases[$name . ' without prefix'] = array_merge($source, ['']);
+        }
+        return $cases;
     }
 
     /**
@@ -482,13 +539,18 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
             'missing vendor' => [['public/widget' => 'vendor:']],
             'invalid vendor' => [['public/widget' => 'vendor:acme/widget']],
             'missing package vendor' => [['public/widget' => 'widget']],
+            'empty prefixed package' => [['public/widget' => 'package:']],
+            'missing prefixed package vendor' => [['public/widget' => 'package:widget']],
+            'invalid prefixed package name' => [['public/widget' => 'package:Acme/widget']],
+            'path under package prefix' => [['public/widget' => 'package:acme/widget/dist/widget.js']],
+            'trailing slash under package prefix' => [['public/widget' => 'package:acme/widget/']],
             'unsupported prefix' => [['public/widget' => 'file:acme/widget/dist/widget.js']],
         ];
     }
 
     public static function invalidSpecifierProvider(): array
     {
-        return [
+        $cases = [
             'empty' => ['path:'],
             'missing package' => ['path:acme'],
             'missing source' => ['path:acme/widget'],
@@ -509,6 +571,12 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
             'placeholder' => ['path:acme/widget/{$name}'],
             'Windows traversal alias' => ['path:acme/widget/.. /escape'],
         ];
+        foreach ($cases as $name => $case) {
+            if ($name !== 'missing source') {
+                $cases[$name . ' without prefix'] = [substr($case[0], 5)];
+            }
+        }
+        return $cases;
     }
 
     public function testInvalidRulesDoNotBlockValidRules(): void
