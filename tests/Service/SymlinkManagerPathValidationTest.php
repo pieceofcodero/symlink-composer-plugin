@@ -12,10 +12,10 @@ use Composer\Package\Package;
 use Composer\Package\RootPackage;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 
-final class SymlinkManagerPathValidationTest extends TestCase
+final class SymlinkManagerPathValidationTest extends BaseTestCase
 {
     /** @var string */
     private $originalCwd;
@@ -67,7 +67,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     {
         mkdir('public');
         file_put_contents('public/keep.txt', 'preserve me');
-        symlink('../vendor/acme/widget', 'public/keep-link');
+        $this->createFixtureLink('../vendor/acme/widget', 'public/keep-link');
         $before = $this->snapshot('.');
         $key = 'symlink-preferred-' . $placeholder;
 
@@ -181,7 +181,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     {
         mkdir('public');
         mkdir($outside);
-        symlink('../' . $outside, 'public/redirect');
+        $this->createFixtureLink('../' . $outside, 'public/redirect');
         $before = $this->snapshot('.');
 
         $io = $this->createLink('public/{$name}', ['symlink-preferred-name' => 'redirect/new/widget']);
@@ -201,7 +201,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     public function testAllowsAnExplicitSymlinkedBaseDirectory(): void
     {
         mkdir('chosen');
-        symlink('chosen', 'public');
+        $this->createFixtureLink('chosen', 'public');
         $this->createLink('public/{$name}', ['symlink-preferred-name' => 'nested/widget']);
         $this->assertPackageLink('chosen/nested/widget');
     }
@@ -209,7 +209,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     public function testAllowsIntermediateSymlinksWithinTheBaseDirectory(): void
     {
         mkdir('public/actual', 0755, true);
-        symlink('actual', 'public/redirect');
+        $this->createFixtureLink('actual', 'public/redirect');
         $this->createLink('public/{$name}', ['symlink-preferred-name' => 'redirect/nested/widget']);
         $this->assertPackageLink('public/actual/nested/widget');
     }
@@ -217,7 +217,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     public function testRejectsDanglingIntermediateSymlinksWithoutFilesystemChanges(): void
     {
         mkdir('public');
-        symlink('missing', 'public/redirect');
+        $this->createFixtureLink('missing', 'public/redirect');
         $before = $this->snapshot('.');
 
         $io = $this->createLink('public/{$name}', ['symlink-preferred-name' => 'redirect/widget']);
@@ -230,7 +230,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     {
         mkdir('public');
         file_put_contents('vendor/acme/widget/keep.txt', 'preserve me');
-        symlink(getcwd() . '/vendor/acme/widget', 'public/widget');
+        $this->createFixtureLink(getcwd() . '/vendor/acme/widget', 'public/widget');
         $this->createLink('public/{$name}');
         $this->assertPackageLink('public/widget');
         self::assertSame('preserve me', file_get_contents('vendor/acme/widget/keep.txt'), 'The link target must be preserved');
@@ -271,8 +271,8 @@ final class SymlinkManagerPathValidationTest extends TestCase
     private function assertPackageLink(string $path): void
     {
         self::assertTrue(is_link($path), 'Expected a symlink at ' . $path);
-        self::assertSame(realpath('vendor/acme/widget'), realpath($path), 'Link must resolve to the package');
-        self::assertStringStartsWith('..', readlink($path), 'Link should retain a relative source path');
+        $this->assertSamePath('vendor/acme/widget', $path, 'Link must resolve to the package');
+        $this->assertLinkTargetFormat($path);
     }
 
     private function snapshot(string $directory): array
@@ -298,7 +298,7 @@ final class SymlinkManagerPathValidationTest extends TestCase
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {

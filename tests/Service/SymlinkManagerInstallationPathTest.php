@@ -16,11 +16,11 @@ use Composer\Repository\InstalledArrayRepository;
 use Composer\Repository\RepositoryManager;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 use RuntimeException;
 
-final class SymlinkManagerInstallationPathTest extends TestCase
+final class SymlinkManagerInstallationPathTest extends BaseTestCase
 {
     /** @var string */
     private $originalCwd;
@@ -112,7 +112,7 @@ final class SymlinkManagerInstallationPathTest extends TestCase
         $package = new Package('acme/widget', '1.0.0.0', '1.0.0');
         mkdir('workspace/widget', 0755, true);
         mkdir('vendor/acme', 0755, true);
-        symlink('../../workspace/widget', 'vendor/acme/widget');
+        $this->createFixtureLink('../../workspace/widget', 'vendor/acme/widget');
         [$manager] = $this->manager([$package]);
 
         self::assertTrue($manager->createSymlinkForPackage($package));
@@ -201,13 +201,38 @@ final class SymlinkManagerInstallationPathTest extends TestCase
         mkdir('components/widget', 0755, true);
         mkdir('vendor/acme/widget', 0755, true);
         mkdir('public');
-        symlink('../vendor/acme/widget', 'public/widget');
+        $existingTarget = $this->createFixtureLink('../vendor/acme/widget', 'public/widget');
         [$manager, $io, $composer] = $this->manager([$package]);
         $this->addCustomInstaller($composer, 'components/widget');
 
         self::assertFalse($manager->createSymlinkForPackage($package));
-        self::assertSame('../vendor/acme/widget', readlink('public/widget'));
+        self::assertSame($existingTarget, readlink('public/widget'));
         self::assertStringContainsString('Symlink collision', $io->getOutput());
+    }
+
+    public function testSupportsWindowsCustomInstallersOnAnotherDrive(): void
+    {
+        if (DIRECTORY_SEPARATOR !== '\\' || strcasecmp(substr(getcwd(), 0, 2), substr($this->originalCwd, 0, 2)) === 0) {
+            self::markTestSkipped('Requires a Windows workspace and temporary directory on different drives.');
+        }
+        $source = $this->originalCwd . '/.symlink-cross-drive-' . bin2hex(random_bytes(8));
+        mkdir($source);
+        file_put_contents($source . '/keep.txt', 'keep');
+        try {
+            $package = new Package('acme/widget', '1.0.0.0', '1.0.0');
+            $package->setType('custom-component');
+            [$manager, $io, $composer] = $this->manager([$package]);
+            $this->addCustomInstaller($composer, $source);
+
+            self::assertTrue($manager->createSymlinksForAllPackages(), $io->getOutput());
+            $this->assertSamePath($source, 'public/widget');
+            self::assertSame('keep', file_get_contents('public/widget/keep.txt'));
+            self::assertTrue($manager->removeSymlinksForPackage($package));
+            self::assertFalse(is_link('public/widget'));
+            self::assertSame('keep', file_get_contents($source . '/keep.txt'));
+        } finally {
+            $this->removeFixture($source);
+        }
     }
 
     private function addCustomInstaller(Composer $composer, string $path): void
@@ -246,14 +271,14 @@ final class SymlinkManagerInstallationPathTest extends TestCase
     private function assertPackageLink(string $source): void
     {
         self::assertTrue(is_link('public/widget'));
-        self::assertSame(realpath($source), realpath('public/widget'));
-        self::assertStringStartsWith('..', readlink('public/widget'));
+        $this->assertSamePath($source, 'public/widget');
+        $this->assertLinkTargetFormat('public/widget');
     }
 
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {

@@ -18,7 +18,7 @@ final class LinkRegistry
     public function __construct(string $vendorDir, IOInterface $io)
     {
         $this->path = $vendorDir . '/composer/symlink-composer-plugin.json';
-        $this->project = realpath(getcwd());
+        $this->project = Filesystem::canonicalPath(getcwd());
         $this->io = $io;
     }
 
@@ -58,7 +58,9 @@ final class LinkRegistry
         $contents = @file_get_contents($this->path);
         $data = $contents === false ? null : json_decode($contents, true);
         if (!is_array($data) || ($data['version'] ?? null) !== 1
-            || ($data['project'] ?? null) !== $this->project || !isset($data['links']) || !is_array($data['links'])) {
+            || !isset($data['project']) || !is_string($data['project'])
+            || Filesystem::pathKey($data['project']) !== Filesystem::pathKey($this->project)
+            || !isset($data['links']) || !is_array($data['links'])) {
             return $this->error('invalid ownership metadata or project mismatch; links have been preserved');
         }
         foreach ($data['links'] as $path => $link) {
@@ -84,8 +86,8 @@ final class LinkRegistry
         }
         clearstatcache(true, $path);
         // A replaced parent must not redirect deletion to a different directory.
-        $parent = realpath(dirname($path));
-        if ($parent === false || $this->pathKey($parent) !== $this->pathKey(dirname($path)) || !is_link($path)) {
+        $parent = Filesystem::canonicalPath(dirname($path));
+        if ($parent === null || Filesystem::pathKey($parent) !== Filesystem::pathKey(dirname($path)) || !is_link($path)) {
             return false;
         }
         $stat = @lstat($path);
@@ -121,7 +123,7 @@ final class LinkRegistry
                 continue;
             }
             if ($this->owns($path)) {
-                if (!@unlink($path)) {
+                if (!Filesystem::removeLink($path)) {
                     $this->error("cannot remove stale symlink at $path");
                     $success = false;
                     continue;
@@ -158,11 +160,6 @@ final class LinkRegistry
         $this->lock = null;
         $this->ready = false;
         return $success;
-    }
-
-    private function pathKey(string $path): string
-    {
-        return DIRECTORY_SEPARATOR === '\\' ? strtolower($path) : $path;
     }
 
     private function error(string $message): bool

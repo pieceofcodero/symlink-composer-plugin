@@ -21,6 +21,11 @@
             "Pieceofcodero\\SymlinkComposerPlugin\\": "src/"
         }
     },
+    "autoload-dev": {
+        "psr-4": {
+            "Pieceofcodero\\SymlinkComposerPlugin\\Tests\\": "tests/"
+        }
+    },
     "scripts": {
         "test": "@php vendor/bin/phpunit"
     },

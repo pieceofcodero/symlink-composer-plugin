@@ -19,11 +19,11 @@ use Composer\Repository\RepositoryManager;
 use Composer\Util\ErrorHandler;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\SymlinkRecreateCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 
-final class SymlinkRecreateCommandTest extends TestCase
+final class SymlinkRecreateCommandTest extends BaseTestCase
 {
     /** @var string */
     private $originalCwd;
@@ -52,7 +52,7 @@ final class SymlinkRecreateCommandTest extends TestCase
 
         self::assertSame(0, $tester->execute([]));
         self::assertTrue(is_link('public/widget'));
-        self::assertSame(realpath('vendor/acme/widget'), realpath('public/widget'));
+        $this->assertSamePath('vendor/acme/widget', 'public/widget');
     }
 
     public function testReturnsZeroForCustomInstallationLocations(): void
@@ -70,7 +70,7 @@ final class SymlinkRecreateCommandTest extends TestCase
 
         self::assertSame(0, $tester->execute([]));
         self::assertTrue(is_link('public/widget'));
-        self::assertSame(realpath('components/widget'), realpath('public/widget'));
+        $this->assertSamePath('components/widget', 'public/widget');
     }
 
     public function testCreatesMultiplePathLinksFromOnePackage(): void
@@ -88,7 +88,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         self::assertTrue(is_link('public/widget.js'));
         self::assertTrue(is_link('public/images'));
         self::assertSame('widget();', file_get_contents('public/widget.js'));
-        self::assertSame(realpath('vendor/acme/widget/images'), realpath('public/images'));
+        $this->assertSamePath('vendor/acme/widget/images', 'public/images');
     }
 
     public function testReturnsOneForMissingPathSourcesAndProcessesOtherPathsFromThePackage(): void
@@ -125,7 +125,7 @@ final class SymlinkRecreateCommandTest extends TestCase
 
         self::assertSame(1, $tester->execute([]));
         self::assertFalse(is_link('public/meta'));
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString('Package acme/meta has no installation path', $io->getOutput());
     }
 
@@ -161,7 +161,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         if ($type === 'directory') {
             mkdir('public/blocked');
         } elseif ($type === 'symlink') {
-            symlink('../unrelated', 'public/blocked');
+            $existingTarget = $this->createFixtureLink('../unrelated', 'public/blocked');
         } else {
             file_put_contents('public/blocked', 'preserve me');
         }
@@ -169,12 +169,12 @@ final class SymlinkRecreateCommandTest extends TestCase
 
         self::assertSame(1, $tester->execute([]));
         self::assertTrue(is_link('public/good'), 'A failure must not prevent later links');
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString($type === 'symlink' ? 'Symlink collision' : 'Target path exists', $io->getOutput());
         if ($type === 'directory') {
             self::assertTrue(is_dir('public/blocked') && !is_link('public/blocked'));
         } elseif ($type === 'symlink') {
-            self::assertSame('../unrelated', readlink('public/blocked'));
+            self::assertSame($existingTarget, readlink('public/blocked'));
         } else {
             self::assertSame('preserve me', file_get_contents('public/blocked'));
         }
@@ -197,8 +197,8 @@ final class SymlinkRecreateCommandTest extends TestCase
         [$tester, $io] = $this->command(['public/{$name}' => 'type:library'], [$first, $collision, $good]);
 
         self::assertSame(1, $tester->execute([]));
-        self::assertSame(realpath('vendor/acme/widget'), realpath('public/widget'));
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/widget', 'public/widget');
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString('Symlink collision', $io->getOutput());
     }
 
@@ -210,7 +210,7 @@ final class SymlinkRecreateCommandTest extends TestCase
 
         self::assertSame(1, $tester->execute([]));
         self::assertFalse(file_exists('escape'));
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString('Invalid symlink-preferred-name', $io->getOutput());
     }
 
@@ -220,12 +220,12 @@ final class SymlinkRecreateCommandTest extends TestCase
         $good = $this->package('acme/good');
         mkdir('public');
         mkdir('outside');
-        symlink('../outside', 'public/redirect');
+        $this->createFixtureLink('../outside', 'public/redirect');
         [$tester, $io] = $this->command(['public/{$name}' => 'vendor:acme'], [$invalid, $good]);
 
         self::assertSame(1, $tester->execute([]));
         self::assertFalse(file_exists('outside/widget'));
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString('Invalid symlink destination', $io->getOutput());
     }
 
@@ -236,7 +236,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         [$tester, $io] = $this->command(['public/{$name}' => 'vendor:acme'], [$missing, $good]);
 
         self::assertSame(1, $tester->execute([]));
-        self::assertSame(realpath('vendor/acme/good'), realpath('public/good'));
+        $this->assertSamePath('vendor/acme/good', 'public/good');
         self::assertStringContainsString('Package path does not exist', $io->getOutput());
     }
 
@@ -248,10 +248,10 @@ final class SymlinkRecreateCommandTest extends TestCase
         [$tester] = $this->command(['public/{$name}' => 'vendor:acme'], [$package]);
 
         self::assertSame(1, $tester->execute([]));
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
 
         self::assertSame(0, $tester->execute([]));
-        self::assertSame(realpath('vendor/acme/widget'), realpath('public/widget'));
+        $this->assertSamePath('vendor/acme/widget', 'public/widget');
     }
 
     /**
@@ -266,7 +266,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         $good = $this->package('other/good');
         mkdir('public');
         if ($operation === 'remove existing symlink') {
-            symlink('../vendor/acme/widget', 'public/widget');
+            $this->createFixtureLink('../vendor/acme/widget', 'public/widget');
         }
         [$tester, $io] = $this->command([
             'public/{$name}' => 'vendor:acme',
@@ -291,7 +291,7 @@ final class SymlinkRecreateCommandTest extends TestCase
         }
 
         self::assertStringContainsString('Failed to ' . $operation, $io->getOutput());
-        self::assertSame(realpath('vendor/other/good'), realpath('good/good'));
+        $this->assertSamePath('vendor/other/good', 'good/good');
         if ($operation === 'remove existing symlink') {
             self::assertSame('../vendor/acme/widget', readlink('public/widget'));
         } else {
@@ -351,7 +351,7 @@ final class SymlinkRecreateCommandTest extends TestCase
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {

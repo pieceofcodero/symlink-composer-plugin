@@ -6,6 +6,11 @@ A Composer plugin that creates symlinks for specific packages according to defin
 
 Requires PHP 7.4 or PHP 8.x and Composer 2.
 
+On Windows, PHP needs permission to create symbolic links; an elevated terminal
+may be required. Links use absolute targets on Windows, including when an installer
+places sources on another drive. Unix links use relative targets. After moving a
+Windows project, recreate its links to update their targets.
+
 ```bash
 composer require pieceofcodero/symlink-composer-plugin
 ```
@@ -162,6 +167,11 @@ preserved; obsolete ownership records for them are forgotten. Links created
 before ownership tracking are left in place until a successful recreation
 records them.
 
+On Windows, directory symlinks are removed with `rmdir()` and file symlinks with
+`unlink()`. Both operations remove the link itself and preserve its target.
+Windows path comparisons account for separators, ASCII casing, and short directory
+aliases such as `RUNNER~1`.
+
 If any requested link for a package fails, that package's obsolete links are
 kept for a retry. Invalid root configuration suppresses obsolete-link cleanup
 while valid rules continue to run. Cleanup failures retain the affected records
@@ -237,3 +247,8 @@ user replacements, redirected parents, corrupt metadata, and retrying failures.
 Permission-failure tests require a non-root POSIX user; FIFO tests require the
 POSIX extension. These tests are skipped on Windows; the remaining suite runs
 on both operating systems. The POSIX extension is requested only for Linux jobs.
+Windows fixtures create links to existing targets before making them dangling;
+self-referencing fixtures are built by moving a link onto its former target.
+Assertions compare filesystem identities so long paths and 8.3 aliases can refer
+to the same object. Windows-specific tests also cover path casing, drive roots,
+and custom installer sources on another drive when one is available.

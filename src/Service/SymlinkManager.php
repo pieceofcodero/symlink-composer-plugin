@@ -347,9 +347,9 @@ class SymlinkManager
         // Existing links may come from an earlier Composer run or an unrelated owner.
         if (is_link($resolvedTargetPath) && (isset($this->activeDestinations[$destinationKey])
             || !$this->registry->owns($destinationKey, $packageName))) {
-            $existingSource = realpath($resolvedTargetPath);
-            $expectedSource = realpath($sourcePath);
-            if ($existingSource === false || $expectedSource === false
+            $existingSource = Filesystem::canonicalPath($resolvedTargetPath);
+            $expectedSource = Filesystem::canonicalPath($sourcePath);
+            if ($existingSource === null || $expectedSource === null
                 || $this->normalizePathCase($existingSource) !== $this->normalizePathCase($expectedSource)) {
                 $existingTarget = readlink($resolvedTargetPath);
                 $this->io->write("<error>Symlink collision for $packageName at $resolvedTargetPath: existing symlink points to $existingTarget.</error>");
@@ -368,7 +368,7 @@ class SymlinkManager
 
         // Remove existing symlink if it exists, do not remove directories, regular files or special files (e.g. Unix sockets).
         if (is_link($resolvedTargetPath)) {
-            if (!@unlink($resolvedTargetPath)) {
+            if (!Filesystem::removeLink($resolvedTargetPath)) {
                 $this->io->write("<error>Failed to remove existing symlink: $resolvedTargetPath.</error>");
                 return false;
             }
@@ -378,8 +378,14 @@ class SymlinkManager
         }
 
         // Create the symlink
-        $relativePath = $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
-        if (@symlink($relativePath, $resolvedTargetPath)) {
+        // Use an existing absolute target on Windows to avoid PHP's relative-path
+        // limitations and support custom installers on a different drive.
+        $linkTarget = DIRECTORY_SEPARATOR === '\\'
+            ? Filesystem::canonicalPath($sourcePath)
+            : $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
+        $linkDirectory = Filesystem::canonicalPath(dirname($resolvedTargetPath));
+        $linkPath = $linkDirectory === null ? null : $linkDirectory . DIRECTORY_SEPARATOR . basename($resolvedTargetPath);
+        if ($linkTarget !== null && $linkPath !== null && @symlink($linkTarget, $linkPath)) {
             $this->destinationOwners[$destinationKey] = $packageName;
             $this->activeDestinations[$destinationKey] = true;
             $this->io->write("<info>Created symlink: $resolvedTargetPath -> $sourcePath.</info>");
@@ -393,9 +399,9 @@ class SymlinkManager
     private function resolveSourcePath(string $packagePath, string $relativeSource): ?string
     {
         $source = $packagePath . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativeSource);
-        $resolvedPackage = realpath($packagePath);
-        $resolvedSource = realpath($source);
-        if ($resolvedPackage === false || $resolvedSource === false) {
+        $resolvedPackage = Filesystem::canonicalPath($packagePath);
+        $resolvedSource = Filesystem::canonicalPath($source);
+        if ($resolvedPackage === null || $resolvedSource === null) {
             $this->io->write("<error>Source path does not exist or cannot be resolved: $source.</error>");
             return null;
         }
@@ -485,8 +491,8 @@ class SymlinkManager
      */
     private function resolveDirectoryPath(string $path): ?string
     {
-        $resolved = realpath($path);
-        if ($resolved !== false) {
+        $resolved = Filesystem::canonicalPath($path);
+        if ($resolved !== null) {
             return is_dir($resolved) ? $resolved : null;
         }
         if (file_exists($path) || is_link($path)) {
@@ -524,7 +530,7 @@ class SymlinkManager
 
     private function normalizePathCase(string $path): string
     {
-        return DIRECTORY_SEPARATOR === '\\' ? strtolower($path) : $path;
+        return Filesystem::pathKey($path);
     }
 
     private function getRelativePath(string $from, string $to): string

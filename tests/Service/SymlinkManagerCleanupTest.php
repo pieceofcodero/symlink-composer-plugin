@@ -25,14 +25,14 @@ use Composer\Script\ScriptEvents;
 use Composer\Util\ErrorHandler;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Plugin;
 use Pieceofcodero\SymlinkComposerPlugin\Service\LinkRegistry;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 use Pieceofcodero\SymlinkComposerPlugin\SymlinkRecreateCommand;
 use Symfony\Component\Console\Tester\CommandTester;
 
-final class SymlinkManagerCleanupTest extends TestCase
+final class SymlinkManagerCleanupTest extends BaseTestCase
 {
     private $originalCwd;
     private $fixture;
@@ -60,7 +60,10 @@ final class SymlinkManagerCleanupTest extends TestCase
     {
         $this->createInitialLink();
         $state = $this->state();
-        $path = getcwd() . '/public/widget';
+        self::assertCount(1, $state['links']);
+        $path = array_key_first($state['links']);
+        $this->assertSamePath(dirname($path), 'public');
+        self::assertSame('widget', basename($path));
         self::assertSame('acme/widget', $state['links'][$path]['package']);
         self::assertSame(readlink($path), $state['links'][$path]['target']);
         self::assertSame(lstat($path)['ino'], $state['links'][$path]['ino']);
@@ -69,7 +72,7 @@ final class SymlinkManagerCleanupTest extends TestCase
         self::assertTrue($manager->createSymlinksForAllPackages());
         self::assertFalse(is_link('public/widget'));
         self::assertTrue(is_dir('public'), 'Cleanup must leave parent directories in place');
-        self::assertSame(realpath('vendor/acme/widget'), realpath('assets/widget'));
+        $this->assertSamePath('vendor/acme/widget', 'assets/widget');
         self::assertCount(1, $this->state()['links']);
     }
 
@@ -114,7 +117,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testEmptyConfigurationRemovesOnlyTrackedLinks(): void
     {
         $this->createInitialLink();
-        symlink('../vendor/acme/widget', 'public/untracked');
+        $this->createFixtureLink('../vendor/acme/widget', 'public/untracked');
         file_put_contents('public/keep.txt', 'keep');
         [$manager] = $this->context([]);
 
@@ -128,7 +131,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testDoesNotClaimOldLinksWithoutRecreatingThem(): void
     {
         mkdir('public');
-        symlink('../vendor/acme/widget', 'public/widget');
+        $this->createFixtureLink('../vendor/acme/widget', 'public/widget');
         [$manager] = $this->context(['assets/{$name}' => 'vendor:acme']);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -146,8 +149,8 @@ final class SymlinkManagerCleanupTest extends TestCase
         [$manager] = $this->context(['public/{$name}' => 'type:library'], [$replacement]);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
-        self::assertSame(realpath('vendor/other/widget'), realpath('public/widget'));
-        self::assertSame('other/widget', $this->state()['links'][getcwd() . '/public/widget']['package']);
+        $this->assertSamePath('vendor/other/widget', 'public/widget');
+        self::assertSame('other/widget', reset($this->state()['links'])['package']);
     }
 
     public function testUninstallRemovesOwnedDanglingLinksWithoutTouchingOtherPackages(): void
@@ -156,7 +159,7 @@ final class SymlinkManagerCleanupTest extends TestCase
         mkdir('vendor/other/gadget', 0755, true);
         [$initial] = $this->context(['public/{$name}' => 'type:library'], [$this->package, $other]);
         self::assertTrue($initial->createSymlinksForAllPackages());
-        symlink('../missing', 'public/untracked');
+        $this->createFixtureLink('../missing', 'public/untracked');
         $this->removeFixture('vendor/acme/widget');
         [$manager] = $this->context([]);
 
@@ -171,6 +174,10 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testPreservesUserReplacements(string $replacement): void
     {
         $this->createInitialLink();
+        $identicalTarget = $replacement === '../vendor/acme/widget';
+        if ($identicalTarget) {
+            $replacement = readlink('public/widget');
+        }
         // Build the replacement before unlinking to avoid inode reuse in this fixture.
         if ($replacement === 'file') {
             file_put_contents('public/replacement', 'keep');
@@ -178,9 +185,12 @@ final class SymlinkManagerCleanupTest extends TestCase
             mkdir('public/replacement');
             file_put_contents('public/replacement/keep.txt', 'keep');
         } else {
-            symlink($replacement, 'public/replacement');
+            $replacementTarget = $this->createFixtureLink($replacement, 'public/replacement');
+            if ($identicalTarget) {
+                self::assertSame($replacement, $replacementTarget, 'Exercise replacement with exactly the recorded target');
+            }
         }
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
         rename('public/replacement', 'public/widget');
         clearstatcache();
         $stat = lstat('public/widget');
@@ -192,7 +202,7 @@ final class SymlinkManagerCleanupTest extends TestCase
         if ($replacement === 'file' || $replacement === 'directory') {
             self::assertSame('keep', file_get_contents($replacement === 'file' ? 'public/widget' : 'public/widget/keep.txt'));
         } else {
-            self::assertSame($replacement, readlink('public/widget'));
+            self::assertSame($replacementTarget, readlink('public/widget'));
         }
         self::assertSame([], $this->state()['links']);
     }
@@ -212,7 +222,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     {
         $this->createInitialLink();
         rename('public', 'moved');
-        symlink('moved', 'public');
+        $this->createFixtureLink('moved', 'public');
         [$manager] = $this->context([]);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -224,9 +234,11 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testUsesCanonicalDestinationsForExplicitSymlinkedBases(): void
     {
         mkdir('assets');
-        symlink('assets', 'public');
+        $this->createFixtureLink('assets', 'public');
         $this->createInitialLink();
-        self::assertArrayHasKey(getcwd() . '/assets/widget', $this->state()['links']);
+        $path = array_key_first($this->state()['links']);
+        $this->assertSamePath(dirname($path), 'assets');
+        self::assertSame('widget', basename($path));
         [$manager] = $this->context([]);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -237,7 +249,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testMissingRecordedDestinationsAreForgotten(): void
     {
         $this->createInitialLink();
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
         [$manager] = $this->context([]);
         self::assertTrue($manager->createSymlinksForAllPackages());
         self::assertSame([], $this->state()['links']);
@@ -281,7 +293,7 @@ final class SymlinkManagerCleanupTest extends TestCase
         } elseif ($kind === 'version') {
             $state['version'] = 999;
         } elseif ($kind === 'entry') {
-            $state['links'][getcwd() . '/public/widget']['ino'] = 'invalid';
+            $state['links'][array_key_first($state['links'])]['ino'] = 'invalid';
         } elseif ($kind === 'traversal') {
             $state['links'][getcwd() . '/public/../widget'] = reset($state['links']);
         }
@@ -305,13 +317,28 @@ final class SymlinkManagerCleanupTest extends TestCase
     {
         $this->createInitialLink();
         rename($this->statePath(), 'state.json');
-        symlink(getcwd() . '/state.json', $this->statePath());
+        $this->createFixtureLink(getcwd() . '/state.json', $this->statePath());
         $contents = file_get_contents('state.json');
         [$manager] = $this->context([]);
 
         self::assertFalse($manager->createSymlinksForAllPackages());
         self::assertTrue(is_link('public/widget'));
         self::assertSame($contents, file_get_contents('state.json'));
+    }
+
+    public function testWindowsProjectIdentityIgnoresPathCasing(): void
+    {
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            self::markTestSkipped('Requires Windows path conventions.');
+        }
+        $this->createInitialLink();
+        $state = $this->state();
+        $state['project'] = strtoupper($state['project']);
+        file_put_contents($this->statePath(), json_encode($state));
+        [$manager, $io] = $this->context([]);
+
+        self::assertTrue($manager->createSymlinksForAllPackages(), $io->getOutput());
+        self::assertFalse(is_link('public/widget'));
     }
 
     public function testUsesCustomVendorDirectoryForOwnershipMetadata(): void
@@ -389,7 +416,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     public function testEmptyRepositoryCleansOnlyRecordedLinks(): void
     {
         $this->createInitialLink();
-        symlink('../vendor/acme/widget', 'public/untracked');
+        $this->createFixtureLink('../vendor/acme/widget', 'public/untracked');
         [$manager] = $this->context(['public/{$name}' => 'vendor:acme'], []);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -404,7 +431,7 @@ final class SymlinkManagerCleanupTest extends TestCase
         self::assertTrue($registry->open());
         self::assertTrue($registry->prepare());
         mkdir('public');
-        symlink('../vendor/acme/widget', 'public/widget');
+        $this->createFixtureLink('../vendor/acme/widget', 'public/widget');
         self::assertTrue($registry->record(getcwd() . '/public/widget', 'acme/widget'));
         // A directory at the destination makes atomic replacement fail on every OS.
         mkdir($this->statePath());
@@ -476,8 +503,8 @@ final class SymlinkManagerCleanupTest extends TestCase
 
     private function createInitialLink(): void
     {
-        [$manager] = $this->context(['public/{$name}' => 'vendor:acme']);
-        self::assertTrue($manager->createSymlinksForAllPackages());
+        [$manager, $io] = $this->context(['public/{$name}' => 'vendor:acme']);
+        self::assertTrue($manager->createSymlinksForAllPackages(), $io->getOutput());
     }
 
     private function context(array $rules, ?array $packages = null, string $vendorDir = 'vendor'): array
@@ -530,7 +557,7 @@ final class SymlinkManagerCleanupTest extends TestCase
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {

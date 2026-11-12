@@ -15,10 +15,10 @@ use Composer\Repository\InstalledArrayRepository;
 use Composer\Repository\RepositoryManager;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 
-final class SymlinkManagerCollisionTest extends TestCase
+final class SymlinkManagerCollisionTest extends BaseTestCase
 {
     /** @var string */
     private $originalCwd;
@@ -68,6 +68,24 @@ final class SymlinkManagerCollisionTest extends TestCase
         $this->assertPackageCollision($io, 'public/shared', 'acme/first', 'other/second');
     }
 
+    public function testDetectsWindowsDestinationCasingCollisions(): void
+    {
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            self::markTestSkipped('Requires a Windows filesystem.');
+        }
+        $first = $this->package('acme/widget');
+        $second = $this->package('other/widget');
+        [$manager, $io] = $this->manager([
+            'public/{$name}' => 'vendor:acme',
+            'PUBLIC/{$name}' => 'vendor:other',
+        ]);
+
+        self::assertTrue($manager->createSymlinkForPackage($first), $io->getOutput());
+        self::assertFalse($manager->createSymlinkForPackage($second));
+        $this->assertPackageLink('public/widget', 'acme/widget');
+        $this->assertPackageCollision($io, 'widget', 'acme/widget', 'other/widget');
+    }
+
     public function testDetectsCollisionsAtLiteralDestinations(): void
     {
         $first = $this->package('acme/first');
@@ -87,7 +105,7 @@ final class SymlinkManagerCollisionTest extends TestCase
     public function testDetectsEquivalentDestinationPaths(string $secondTemplate): void
     {
         mkdir('public');
-        symlink('public', 'alias');
+        $this->createFixtureLink('public', 'alias');
         if ($secondTemplate === 'absolute') {
             $secondTemplate = getcwd() . '/public/{$name}';
         }
@@ -122,7 +140,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         $first = $this->package('acme/widget');
         $second = $this->package('other/widget', [], false);
         mkdir('vendor/other');
-        symlink('../acme/widget', 'vendor/other/widget');
+        $this->createFixtureLink('../acme/widget', 'vendor/other/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library']);
 
         $manager->createSymlinkForPackage($first);
@@ -170,17 +188,17 @@ final class SymlinkManagerCollisionTest extends TestCase
         $package = $this->package('acme/widget');
         mkdir('public');
         file_put_contents('keep.txt', 'preserve me');
-        symlink($existingTarget, 'public/widget');
+        $originalTarget = $this->createFixtureLink($existingTarget, 'public/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library']);
 
         $manager->createSymlinkForPackage($package);
 
         self::assertTrue(is_link('public/widget'));
-        self::assertSame($existingTarget, readlink('public/widget'));
+        self::assertSame($originalTarget, readlink('public/widget'));
         self::assertSame('preserve me', file_get_contents('keep.txt'));
         self::assertStringContainsString('Symlink collision', $io->getOutput());
         self::assertStringContainsString('acme/widget', $io->getOutput());
-        self::assertStringContainsString($existingTarget, $io->getOutput());
+        self::assertStringContainsString($originalTarget, $io->getOutput());
     }
 
     public static function existingLinkProvider(): array
@@ -195,13 +213,13 @@ final class SymlinkManagerCollisionTest extends TestCase
     {
         $package = $this->package('acme/widget');
         mkdir('public');
-        symlink(getcwd() . '/vendor/acme/widget', 'public/widget');
+        $this->createFixtureLink(getcwd() . '/vendor/acme/widget', 'public/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library']);
 
         $manager->createSymlinkForPackage($package);
 
         $this->assertPackageLink('public/widget', 'acme/widget');
-        self::assertStringStartsWith('..', readlink('public/widget'));
+        $this->assertLinkTargetFormat('public/widget');
         self::assertStringNotContainsString('Symlink collision', $io->getOutput());
     }
 
@@ -230,7 +248,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         self::assertFalse($manager->createSymlinkForPackage($first));
         self::assertFalse($manager->createSymlinkForPackage($first), 'Duplicate calls must retain the failed result');
         self::assertSame('preserve me', file_get_contents('public/widget'));
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
         self::assertTrue($manager->createSymlinkForPackage($second));
 
         $this->assertPackageLink('public/widget', 'other/widget');
@@ -301,7 +319,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         $second = $this->package('other/widget');
         [$manager, $io] = $this->manager(['public/{$name}' => 'type:library'], [$second]);
         $manager->createSymlinkForPackage($first);
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
 
         self::assertTrue($manager->createSymlinksForAllPackages());
 
@@ -317,7 +335,7 @@ final class SymlinkManagerCollisionTest extends TestCase
         [$manager] = $this->manager(['public/{$name}' => 'type:library'], [$package]);
 
         self::assertFalse($manager->createSymlinksForAllPackages());
-        unlink('public/widget');
+        $this->removeFixtureEntry('public/widget');
 
         self::assertTrue($manager->createSymlinksForAllPackages());
         self::assertTrue($manager->createSymlinkForPackage($package), 'A repeated successful package must remain successful');
@@ -380,7 +398,7 @@ final class SymlinkManagerCollisionTest extends TestCase
     private function assertPackageLink(string $path, string $package): void
     {
         self::assertTrue(is_link($path), 'Expected a symlink at ' . $path);
-        self::assertSame(realpath('vendor/' . $package), realpath($path), 'Link must resolve to ' . $package);
+        $this->assertSamePath('vendor/' . $package, $path, 'Link must resolve to ' . $package);
     }
 
     private function assertPackageCollision(BufferIO $io, string $destination, string $first, string $second): void
@@ -394,7 +412,7 @@ final class SymlinkManagerCollisionTest extends TestCase
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {

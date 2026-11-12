@@ -15,10 +15,10 @@ use Composer\Repository\InstalledArrayRepository;
 use Composer\Repository\RepositoryManager;
 use Composer\Util\Loop;
 use DirectoryIterator;
-use PHPUnit\Framework\TestCase;
+use Pieceofcodero\SymlinkComposerPlugin\Tests\BaseTestCase;
 use Pieceofcodero\SymlinkComposerPlugin\Service\SymlinkManager;
 
-final class SymlinkManagerPathRuleTest extends TestCase
+final class SymlinkManagerPathRuleTest extends BaseTestCase
 {
     /** @var string */
     private $originalCwd;
@@ -178,7 +178,7 @@ final class SymlinkManagerPathRuleTest extends TestCase
      */
     public function testAllowsSourceSymlinksWithinThePackage(string $target): void
     {
-        symlink($target, 'vendor/acme/widget/alias');
+        $this->createFixtureLink($target, 'vendor/acme/widget/alias');
         [$manager] = $this->manager(['public/alias' => 'path:acme/widget/alias']);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -201,7 +201,7 @@ final class SymlinkManagerPathRuleTest extends TestCase
         } else {
             file_put_contents($target, 'preserve me');
         }
-        symlink(getcwd() . '/' . $target, 'vendor/acme/widget/alias');
+        $this->createFixtureLink(getcwd() . '/' . $target, 'vendor/acme/widget/alias');
         [$manager, $io] = $this->manager([
             'public/invalid' => 'path:acme/widget/alias',
             'public/widget.js' => 'path:acme/widget/dist/widget.js',
@@ -230,7 +230,7 @@ final class SymlinkManagerPathRuleTest extends TestCase
      */
     public function testRejectsBrokenSourceSymlinks(string $target): void
     {
-        symlink($target, 'vendor/acme/widget/alias');
+        $this->createFixtureLink($target, 'vendor/acme/widget/alias');
         [$manager, $io] = $this->manager(['public/invalid' => 'path:acme/widget/alias']);
 
         self::assertFalse($manager->createSymlinksForAllPackages());
@@ -260,7 +260,7 @@ final class SymlinkManagerPathRuleTest extends TestCase
     {
         mkdir('workspace');
         rename('vendor/acme/widget', 'workspace/widget');
-        symlink('../../workspace/widget', 'vendor/acme/widget');
+        $this->createFixtureLink('../../workspace/widget', 'vendor/acme/widget');
         [$manager] = $this->manager(['public/widget.js' => 'path:acme/widget/dist/widget.js']);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -289,7 +289,7 @@ final class SymlinkManagerPathRuleTest extends TestCase
     public function testRecreatesExistingLinksToTheSelectedFile(): void
     {
         mkdir('public');
-        symlink(getcwd() . '/vendor/acme/widget/dist/widget.js', 'public/widget.js');
+        $this->createFixtureLink(getcwd() . '/vendor/acme/widget/dist/widget.js', 'public/widget.js');
         [$manager] = $this->manager(['public/widget.js' => 'path:acme/widget/dist/widget.js']);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
@@ -333,13 +333,15 @@ final class SymlinkManagerPathRuleTest extends TestCase
         $this->assertSourceLink('0', 'vendor/acme/widget/dist/widget.js');
     }
 
-    public function testCreatesADirectoryLinkRelativeToTheSourceItself(): void
+    public function testCreatesADirectoryLinkToItsOwnParent(): void
     {
         [$manager] = $this->manager(['vendor/acme/widget/assets/images/self' => 'path:acme/widget/assets/images']);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
         $this->assertSourceLink('vendor/acme/widget/assets/images/self', 'vendor/acme/widget/assets/images');
-        self::assertSame('.', readlink('vendor/acme/widget/assets/images/self'));
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            self::assertSame('.', readlink('vendor/acme/widget/assets/images/self'));
+        }
     }
 
     /**
@@ -464,16 +466,14 @@ final class SymlinkManagerPathRuleTest extends TestCase
     {
         self::assertTrue(is_link($destination), 'Expected a symlink at ' . $destination);
         self::assertNotFalse(realpath($source), 'Expected the source to exist');
-        self::assertSame(realpath($source), realpath($destination));
-        $relativeTarget = readlink($destination);
-        self::assertSame(0, preg_match('~^(?:/|[A-Za-z]:)~', $relativeTarget));
-        self::assertNotSame('\\', substr($relativeTarget, 0, 1));
+        $this->assertSamePath($source, $destination);
+        $this->assertLinkTargetFormat($destination);
     }
 
     private function removeFixture(string $path): void
     {
         if (is_link($path) || !is_dir($path)) {
-            unlink($path);
+            $this->removeFixtureEntry($path);
             return;
         }
         foreach (new DirectoryIterator($path) as $entry) {
