@@ -90,7 +90,13 @@ through a symlinked path repository.
 - An array of criteria uses OR matching. The first matching criterion selects
   the source for that destination. If that source is missing, the rule reports
   an error without trying a later criterion.
-- Valid rules for packages that are not installed are skipped.
+- Each destination rule with no installed package matching any of its criteria
+  emits one warning identifying the destination and criteria during full
+  reconciliation, including `symlink-recreate-all`. This applies to `path:`,
+  exact package names, `vendor:`, and `type:`. Any matching alternative in an
+  array suppresses the warning. Candidates are checked before destination
+  precedence; missing source files in matching packages still produce errors.
+  Unmatched rules are skipped, and these warnings do not fail the command.
 
 For example, alternative packages can supply a file for the same destination:
 

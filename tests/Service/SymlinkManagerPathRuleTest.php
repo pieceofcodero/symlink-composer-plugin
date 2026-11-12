@@ -87,12 +87,13 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
         $paths = ['public/widget.js' => 'path:acme/widget/dist/widget.js'];
         $rules = $wholePackageFirst ? $whole + $paths : $paths + $whole;
         $rules['second-whole/{$name}'] = 'type:library';
-        [$manager] = $this->manager($rules);
+        [$manager, $io] = $this->manager($rules);
 
         self::assertTrue($manager->createSymlinksForAllPackages());
         $this->assertSourceLink('whole/widget', 'vendor/acme/widget');
         $this->assertSourceLink('public/widget.js', 'vendor/acme/widget/dist/widget.js');
         self::assertFalse(file_exists('second-whole'));
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
     }
 
     public static function wholePackageOrderProvider(): array
@@ -146,6 +147,112 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
         self::assertFalse(is_link('public/missing.js'));
         $this->assertSourceLink('public/widget.js', 'vendor/acme/widget/dist/widget.js');
         self::assertStringContainsString('Source path does not exist', $io->getOutput());
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
+    }
+
+    /**
+     * @dataProvider unmatchedRuleProvider
+     */
+    public function testWarnsOnceForRulesWithoutCandidates($criteria, bool $includePackage): void
+    {
+        $packages = $includePackage ? [new Package('acme/widget', '1.0.0.0', '1.0.0')] : [];
+        [$manager, $io] = $this->manager([
+            'public/widget.js' => $criteria,
+        ], $packages);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        self::assertFalse(file_exists('public'));
+        self::assertSame(1, substr_count($io->getOutput(), 'No installed package matches'));
+        self::assertStringContainsString('destination public/widget.js', $io->getOutput());
+        foreach (is_array($criteria) ? $criteria : [$criteria] as $criterion) {
+            self::assertStringContainsString($criterion, $io->getOutput());
+        }
+    }
+
+    public static function unmatchedRuleProvider(): array
+    {
+        $cases = [];
+        foreach ([
+            'path' => 'path:other/widget/dist/widget.js',
+            'package' => 'other/widget',
+            'vendor' => 'vendor:other',
+            'type' => 'type:component',
+            'alternatives' => ['path:other/widget/dist/widget.js', 'other/widget', 'vendor:other', 'type:component'],
+            'empty criteria' => [],
+        ] as $name => $criteria) {
+            $cases[$name . ' with empty repository'] = [$criteria, false];
+            $cases[$name . ' with unrelated package'] = [$criteria, true];
+        }
+        return $cases;
+    }
+
+    /**
+     * @dataProvider matchingAlternativeProvider
+     */
+    public function testAnyMatchingAlternativeSuppressesTheWarning(array $criteria): void
+    {
+        [$manager, $io] = $this->manager(['public/widget' => $criteria]);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        self::assertTrue(is_link('public/widget'));
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
+    }
+
+    public static function matchingAlternativeProvider(): array
+    {
+        $cases = [];
+        foreach (['path:acme/widget/dist/widget.js', 'acme/widget', 'vendor:acme', 'type:library'] as $criterion) {
+            $cases[$criterion . ' first'] = [[$criterion, 'path:other/widget/missing.js']];
+            $cases[$criterion . ' last'] = [['path:other/widget/missing.js', $criterion]];
+        }
+        return $cases;
+    }
+
+    public function testUnmatchedRuleWarningsDoNotBlockOtherDestinations(): void
+    {
+        [$manager, $io] = $this->manager([
+            'public/widget.js' => ['path:other/widget/dist/widget.js', 'path:acme/widget/dist/widget.js'],
+            'public/widget.css' => 'path:acme/widget/dist/widget.css',
+            'whole/{$name}' => 'vendor:absent',
+        ]);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        $this->assertSourceLink('public/widget.js', 'vendor/acme/widget/dist/widget.js');
+        $this->assertSourceLink('public/widget.css', 'vendor/acme/widget/dist/widget.css');
+        self::assertSame(1, substr_count($io->getOutput(), 'No installed package matches'));
+        self::assertStringContainsString('destination whole/{$name}: vendor:absent', $io->getOutput());
+        self::assertStringNotContainsString('path:other/widget', $io->getOutput());
+    }
+
+    /**
+     * @dataProvider multipleCandidateProvider
+     */
+    public function testVendorAndTypeRulesCanHaveMultipleCandidates(string $criterion): void
+    {
+        mkdir('vendor/acme/gadget', 0755, true);
+        $packages = [new Package('acme/widget', '1.0.0.0', '1.0.0'), new Package('acme/gadget', '1.0.0.0', '1.0.0')];
+        [$manager, $io] = $this->manager(['public/{$name}' => $criterion], $packages);
+
+        self::assertTrue($manager->createSymlinksForAllPackages());
+        $this->assertSourceLink('public/widget', 'vendor/acme/widget');
+        $this->assertSourceLink('public/gadget', 'vendor/acme/gadget');
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
+    }
+
+    public static function multipleCandidateProvider(): array
+    {
+        return ['vendor' => ['vendor:acme'], 'type' => ['type:library']];
+    }
+
+    public function testDoesNotWarnAboutOtherPackagesDuringIndividualPackageOperations(): void
+    {
+        $package = new Package('acme/widget', '1.0.0.0', '1.0.0');
+        [$manager, $io] = $this->manager([
+            'public/widget.js' => 'path:other/widget/dist/widget.js',
+        ], [$package]);
+
+        self::assertTrue($manager->createSymlinkForPackage($package));
+        self::assertStringNotContainsString('No installed package matches', $io->getOutput());
     }
 
     public function testDetectsDifferentSourcesClaimingTheSameDestinationWithinOnePackage(): void

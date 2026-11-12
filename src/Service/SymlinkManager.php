@@ -107,6 +107,7 @@ class SymlinkManager
                 foreach ($packages as $package) {
                     $installed[$package->getName()] = true;
                 }
+                $this->warnAboutUnmatchedRules($symlinkConfig, $packages);
                 // Removed packages must release destinations before new packages claim them.
                 if ($valid && !$this->registry->cleanup([], $installed)) {
                     $success = false;
@@ -197,6 +198,25 @@ class SymlinkManager
         }
 
         return [$rules, $valid];
+    }
+
+    /** Check candidates before destination precedence, after Composer finishes package operations. */
+    private function warnAboutUnmatchedRules(array $symlinkConfig, array $packages): void
+    {
+        foreach ($symlinkConfig as $targetPath => $criteria) {
+            foreach ($packages as $package) {
+                if ($this->getMatchingCriterion($package, $criteria) !== null) {
+                    continue 2;
+                }
+            }
+            $descriptions = array_map(static function (array $criterion): string {
+                return isset($criterion['package'])
+                    ? 'path:' . $criterion['package'] . '/' . $criterion['path']
+                    : $criterion['rule'];
+            }, $criteria);
+            $description = $descriptions ? implode(', ', $descriptions) : '(no criteria)';
+            $this->io->writeError("<warning>No installed package matches symlink rule for destination $targetPath: $description.</warning>");
+        }
     }
 
     private function parseCriterion(string $criterion): ?array

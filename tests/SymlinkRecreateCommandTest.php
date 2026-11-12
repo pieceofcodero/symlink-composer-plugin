@@ -108,6 +108,19 @@ final class SymlinkRecreateCommandTest extends BaseTestCase
         self::assertStringContainsString('Source path does not exist', $io->getOutput());
     }
 
+    public function testWarnsAboutUninstalledSourcePackagesWithoutFailingTheCommand(): void
+    {
+        [$tester, $io] = $this->command([
+            'private/application/core/MY_Loader.php' => 'path:medianet/ci-bonfire-advanced-loader/application/core/MY_Loader.php',
+        ], []);
+
+        self::assertSame(0, $tester->execute([]));
+        self::assertFalse(file_exists('private'));
+        self::assertStringContainsString('No installed package matches symlink rule', $io->getOutput());
+        self::assertStringContainsString('path:medianet/ci-bonfire-advanced-loader/application/core/MY_Loader.php', $io->getOutput());
+        self::assertStringContainsString('destination private/application/core/MY_Loader.php', $io->getOutput());
+    }
+
     public function testRejectsMalformedPathCriteriaWithoutInstalledPackages(): void
     {
         [$tester, $io] = $this->command(['public/widget.js' => 'path:acme/widget/../escape'], []);
