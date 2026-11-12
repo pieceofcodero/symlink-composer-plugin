@@ -2,7 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Service;
 
-/** Platform differences shared by link creation and ownership checks. */
+/** Filesystem path and symlink operations shared by the plugin services. */
 final class Filesystem
 {
     public static function isWindows(): bool
@@ -59,6 +59,100 @@ final class Filesystem
         return self::isWindows() ? strtolower(str_replace('/', '\\', $path)) : $path;
     }
 
+    /**
+     * Resolve existing ancestors, including symlinks, without creating missing directories.
+     */
+    public static function resolveDirectoryPath(string $path): ?string
+    {
+        $resolved = self::canonicalPath($path);
+        if ($resolved !== null) {
+            return is_dir($resolved) ? $resolved : null;
+        }
+        if (file_exists($path) || is_link($path)) {
+            return null;
+        }
+
+        $parent = dirname($path);
+        if ($parent === $path) {
+            return null;
+        }
+        $resolvedParent = self::resolveDirectoryPath($parent);
+        if ($resolvedParent === null) {
+            return null;
+        }
+
+        $name = basename($path);
+        if ($name === '.') {
+            return $resolvedParent;
+        }
+        if ($name === '..') {
+            return dirname($resolvedParent);
+        }
+
+        return rtrim($resolvedParent, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
+    }
+
+    public static function isWithinDirectory(string $path, string $directory): bool
+    {
+        $path = self::pathKey($path);
+        $directory = self::pathKey($directory);
+
+        return $path === $directory
+            || strpos($path, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0;
+    }
+
+    /** Calculate a relative target for Unix links; Windows links use absolute targets. */
+    public static function getUnixRelativePath(string $from, string $to): string
+    {
+        // Convert to absolute paths and normalize them
+        $from = realpath($from) ?: $from;
+        $to = realpath($to) ?: $to;
+
+        // Ensure both paths are absolute
+        if (!str_starts_with($from, DIRECTORY_SEPARATOR)) {
+            $from = getcwd() . DIRECTORY_SEPARATOR . $from;
+        }
+        if (!str_starts_with($to, DIRECTORY_SEPARATOR)) {
+            $to = getcwd() . DIRECTORY_SEPARATOR . $to;
+        }
+
+        $from = self::normalizePath($from);
+        $to = self::normalizePath($to);
+
+        $from = rtrim($from, DIRECTORY_SEPARATOR);
+        $to = rtrim($to, DIRECTORY_SEPARATOR);
+
+        $fromParts = explode(DIRECTORY_SEPARATOR, $from);
+        $toParts = explode(DIRECTORY_SEPARATOR, $to);
+
+        // Find common base
+        $commonLength = 0;
+        $minLength = min(count($fromParts), count($toParts));
+
+        for ($i = 0; $i < $minLength; $i++) {
+            if ($fromParts[$i] === $toParts[$i]) {
+                $commonLength++;
+            } else {
+                break;
+            }
+        }
+
+        // Build relative path
+        $relativeParts = [];
+
+        // Add ".." for each remaining part in $from
+        for ($i = $commonLength; $i < count($fromParts); $i++) {
+            $relativeParts[] = '..';
+        }
+
+        // Add remaining parts from $to
+        for ($i = $commonLength; $i < count($toParts); $i++) {
+            $relativeParts[] = $toParts[$i];
+        }
+
+        return $relativeParts ? implode(DIRECTORY_SEPARATOR, $relativeParts) : '.';
+    }
+
     /** Never recurse into a link's target, including when a directory link is dangling. */
     public static function removeLink(string $path): bool
     {
@@ -70,5 +164,24 @@ final class Filesystem
             return true;
         }
         return @unlink($path);
+    }
+
+    private static function normalizePath(string $path): string
+    {
+        $parts = explode(DIRECTORY_SEPARATOR, str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path));
+        $normalized = [];
+
+        foreach ($parts as $part) {
+            if ($part === '' || $part === '.') {
+                continue;
+            }
+            if ($part === '..') {
+                array_pop($normalized);
+            } else {
+                $normalized[] = $part;
+            }
+        }
+
+        return DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $normalized);
     }
 }

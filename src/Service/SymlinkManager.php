@@ -320,14 +320,14 @@ class SymlinkManager
         }
 
         $targetDir = dirname($resolvedTargetPath);
-        $canonicalTargetDir = $this->resolveDirectoryPath($targetDir);
+        $canonicalTargetDir = Filesystem::resolveDirectoryPath($targetDir);
         if ($canonicalTargetDir === null) {
             $this->io->write("<error>Failed to resolve target directory: $targetDir.</error>");
             return false;
         }
 
         // Resolve the parent, not the final symlink, so aliases share a destination key.
-        $destinationKey = $this->normalizePathCase(
+        $destinationKey = Filesystem::pathKey(
             rtrim($canonicalTargetDir, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . basename($resolvedTargetPath)
         );
         if (!$this->registry->prepare()) {
@@ -350,7 +350,7 @@ class SymlinkManager
             $existingSource = Filesystem::canonicalPath($resolvedTargetPath);
             $expectedSource = Filesystem::canonicalPath($sourcePath);
             if ($existingSource === null || $expectedSource === null
-                || $this->normalizePathCase($existingSource) !== $this->normalizePathCase($expectedSource)) {
+                || Filesystem::pathKey($existingSource) !== Filesystem::pathKey($expectedSource)) {
                 $existingTarget = readlink($resolvedTargetPath);
                 $this->io->write("<error>Symlink collision for $packageName at $resolvedTargetPath: existing symlink points to $existingTarget.</error>");
                 return false;
@@ -382,7 +382,7 @@ class SymlinkManager
         // limitations and support custom installers on a different drive.
         $linkTarget = Filesystem::isWindows()
             ? Filesystem::canonicalPath($sourcePath)
-            : $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
+            : Filesystem::getUnixRelativePath(dirname($resolvedTargetPath), $sourcePath);
         $linkDirectory = Filesystem::canonicalPath(dirname($resolvedTargetPath));
         $linkPath = $linkDirectory === null ? null : $linkDirectory . DIRECTORY_SEPARATOR . basename($resolvedTargetPath);
         if ($linkTarget !== null && $linkPath !== null && @symlink($linkTarget, $linkPath)) {
@@ -405,7 +405,7 @@ class SymlinkManager
             $this->io->write("<error>Source path does not exist or cannot be resolved: $source.</error>");
             return null;
         }
-        if (!$this->isWithinDirectory($resolvedSource, $resolvedPackage)) {
+        if (!Filesystem::isWithinDirectory($resolvedSource, $resolvedPackage)) {
             $this->io->write("<error>Source path escapes the package directory: $source.</error>");
             return null;
         }
@@ -459,9 +459,9 @@ class SymlinkManager
 
         // The literal directory before the first placeholder is controlled by the root project.
         $baseDir = dirname(substr($targetPath, 0, $firstPlaceholder) . 'placeholder');
-        $baseDir = $this->resolveDirectoryPath($baseDir);
-        $targetDir = $this->resolveDirectoryPath(dirname($resolvedTargetPath));
-        if ($baseDir === null || $targetDir === null || !$this->isWithinDirectory($targetDir, $baseDir)) {
+        $baseDir = Filesystem::resolveDirectoryPath($baseDir);
+        $targetDir = Filesystem::resolveDirectoryPath(dirname($resolvedTargetPath));
+        if ($baseDir === null || $targetDir === null || !Filesystem::isWithinDirectory($targetDir, $baseDir)) {
             $this->io->write("<error>Invalid symlink destination for $packageName: path leaves the configured directory or has an invalid parent.</error>");
             return null;
         }
@@ -484,122 +484,5 @@ class SymlinkManager
         }
 
         return true;
-    }
-
-    /**
-     * Resolve existing ancestors, including symlinks, without creating missing directories.
-     */
-    private function resolveDirectoryPath(string $path): ?string
-    {
-        $resolved = Filesystem::canonicalPath($path);
-        if ($resolved !== null) {
-            return is_dir($resolved) ? $resolved : null;
-        }
-        if (file_exists($path) || is_link($path)) {
-            return null;
-        }
-
-        $parent = dirname($path);
-        if ($parent === $path) {
-            return null;
-        }
-        $resolvedParent = $this->resolveDirectoryPath($parent);
-        if ($resolvedParent === null) {
-            return null;
-        }
-
-        $name = basename($path);
-        if ($name === '.') {
-            return $resolvedParent;
-        }
-        if ($name === '..') {
-            return dirname($resolvedParent);
-        }
-
-        return rtrim($resolvedParent, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR . $name;
-    }
-
-    private function isWithinDirectory(string $path, string $directory): bool
-    {
-        $path = $this->normalizePathCase($path);
-        $directory = $this->normalizePathCase($directory);
-
-        return $path === $directory
-            || strpos($path, rtrim($directory, DIRECTORY_SEPARATOR) . DIRECTORY_SEPARATOR) === 0;
-    }
-
-    private function normalizePathCase(string $path): string
-    {
-        return Filesystem::pathKey($path);
-    }
-
-    private function getRelativePath(string $from, string $to): string
-    {
-        // Convert to absolute paths and normalize them
-        $from = realpath($from) ?: $from;
-        $to = realpath($to) ?: $to;
-
-        // Ensure both paths are absolute
-        if (!str_starts_with($from, DIRECTORY_SEPARATOR)) {
-            $from = getcwd() . DIRECTORY_SEPARATOR . $from;
-        }
-        if (!str_starts_with($to, DIRECTORY_SEPARATOR)) {
-            $to = getcwd() . DIRECTORY_SEPARATOR . $to;
-        }
-
-        $from = $this->normalizePath($from);
-        $to = $this->normalizePath($to);
-
-        $from = rtrim($from, DIRECTORY_SEPARATOR);
-        $to = rtrim($to, DIRECTORY_SEPARATOR);
-
-        $fromParts = explode(DIRECTORY_SEPARATOR, $from);
-        $toParts = explode(DIRECTORY_SEPARATOR, $to);
-
-        // Find common base
-        $commonLength = 0;
-        $minLength = min(count($fromParts), count($toParts));
-
-        for ($i = 0; $i < $minLength; $i++) {
-            if ($fromParts[$i] === $toParts[$i]) {
-                $commonLength++;
-            } else {
-                break;
-            }
-        }
-
-        // Build relative path
-        $relativeParts = [];
-
-        // Add ".." for each remaining part in $from
-        for ($i = $commonLength; $i < count($fromParts); $i++) {
-            $relativeParts[] = '..';
-        }
-
-        // Add remaining parts from $to
-        for ($i = $commonLength; $i < count($toParts); $i++) {
-            $relativeParts[] = $toParts[$i];
-        }
-
-        return $relativeParts ? implode(DIRECTORY_SEPARATOR, $relativeParts) : '.';
-    }
-
-    private function normalizePath(string $path): string
-    {
-        $parts = explode(DIRECTORY_SEPARATOR, str_replace(['/', '\\'], DIRECTORY_SEPARATOR, $path));
-        $normalized = [];
-
-        foreach ($parts as $part) {
-            if ($part === '' || $part === '.') {
-                continue;
-            }
-            if ($part === '..') {
-                array_pop($normalized);
-            } else {
-                $normalized[] = $part;
-            }
-        }
-
-        return DIRECTORY_SEPARATOR . implode(DIRECTORY_SEPARATOR, $normalized);
     }
 }
