@@ -404,7 +404,7 @@ final class SymlinkManagerCollisionTest extends BaseTestCase
     private function assertPackageCollision(BufferIO $io, string $destination, string $first, string $second): void
     {
         self::assertStringContainsString('Symlink collision', $io->getOutput());
-        self::assertStringContainsString($destination, $io->getOutput());
+        self::assertStringContainsString(str_replace('/', DIRECTORY_SEPARATOR, $destination), $io->getOutput());
         self::assertStringContainsString($first, $io->getOutput());
         self::assertStringContainsString($second, $io->getOutput());
     }

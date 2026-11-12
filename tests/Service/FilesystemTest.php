@@ -98,6 +98,30 @@ final class FilesystemTest extends BaseTestCase
         self::assertSame(Filesystem::pathKey($root), Filesystem::pathKey(Filesystem::canonicalPath($root)));
     }
 
+    /** @dataProvider danglingLinkProvider */
+    public function testCanonicalPathRejectsDanglingLinksWithoutRemovingThem(bool $directory): void
+    {
+        $target = $this->fixture . '/target';
+        $link = $this->fixture . '/link';
+        if ($directory) {
+            mkdir($target);
+        } else {
+            file_put_contents($target, 'temporary target');
+        }
+        $this->createFixtureLink($target, $link);
+        $directory ? rmdir($target) : unlink($target);
+        clearstatcache();
+
+        self::assertFalse(file_exists($link));
+        self::assertNull(Filesystem::canonicalPath($link));
+        self::assertTrue(is_link($link), 'Resolution must preserve the dangling link');
+    }
+
+    public static function danglingLinkProvider(): array
+    {
+        return ['file link' => [false], 'directory link' => [true]];
+    }
+
     public function testWindowsKeysIgnoreSeparatorAndDriveLetterCasing(): void
     {
         if (DIRECTORY_SEPARATOR !== '\\') {

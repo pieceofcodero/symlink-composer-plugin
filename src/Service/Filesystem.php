@@ -8,7 +8,8 @@ final class Filesystem
     public static function canonicalPath(string $path): ?string
     {
         $resolved = realpath($path);
-        if ($resolved === false) {
+        // On Windows realpath() can return the link's path even when its target is missing.
+        if ($resolved === false || !file_exists($resolved)) {
             return null;
         }
         if (DIRECTORY_SEPARATOR !== '\\') {
