@@ -99,7 +99,34 @@ final class FilesystemTest extends BaseTestCase
     }
 
     /** @dataProvider danglingLinkProvider */
-    public function testCanonicalPathRejectsDanglingLinksWithoutRemovingThem(bool $directory): void
+    public function testCanonicalPathRejectsDanglingLinksOnUnix(bool $directory): void
+    {
+        if (DIRECTORY_SEPARATOR === '\\') {
+            self::markTestSkipped('Requires Unix symlink semantics.');
+        }
+        [$target, $link] = $this->createDanglingLink($directory);
+
+        self::assertFalse(file_exists($link), 'Unix existence checks follow the link to its missing target');
+        self::assertFalse(file_exists($target));
+        self::assertNull(Filesystem::canonicalPath($link));
+        self::assertTrue(is_link($link), 'Resolution must preserve the dangling link');
+    }
+
+    /** @dataProvider danglingLinkProvider */
+    public function testCanonicalPathRejectsDanglingLinksOnWindows(bool $directory): void
+    {
+        if (DIRECTORY_SEPARATOR !== '\\') {
+            self::markTestSkipped('Requires Windows symlink semantics.');
+        }
+        [$target, $link] = $this->createDanglingLink($directory);
+
+        // Windows may report the link entry as existing even after its target is gone.
+        self::assertFalse(file_exists($target));
+        self::assertNull(Filesystem::canonicalPath($link));
+        self::assertTrue(is_link($link), 'Resolution must preserve the dangling link');
+    }
+
+    private function createDanglingLink(bool $directory): array
     {
         $target = $this->fixture . '/target';
         $link = $this->fixture . '/link';
@@ -112,9 +139,7 @@ final class FilesystemTest extends BaseTestCase
         $directory ? rmdir($target) : unlink($target);
         clearstatcache();
 
-        self::assertFalse(file_exists($link));
-        self::assertNull(Filesystem::canonicalPath($link));
-        self::assertTrue(is_link($link), 'Resolution must preserve the dangling link');
+        return [$target, $link];
     }
 
     public static function danglingLinkProvider(): array
