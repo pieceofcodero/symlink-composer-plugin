@@ -204,7 +204,7 @@ class SymlinkManager
         if (strpos($criterion, 'path:') === 0) {
             $path = substr($criterion, 5);
             $parts = explode('/', $path, 3);
-            if (count($parts) !== 3 || !$this->isSafeRelativePath($path)
+            if (count($parts) !== 3 || !$this->isValidConfiguredRelativePath($path)
                 || !$this->isPackageName($parts[0] . '/' . $parts[1])) {
                 return null;
             }
@@ -444,7 +444,7 @@ class SymlinkManager
             if ($value === null || $value === '') {
                 $value = $default;
             }
-            if (!$this->isSafeRelativePath($value)) {
+            if (!$this->isValidConfiguredRelativePath($value)) {
                 $this->io->write("<error>Invalid $key for $packageName: expected a safe relative path.</error>");
                 return null;
             }
@@ -469,7 +469,7 @@ class SymlinkManager
         return $resolvedTargetPath;
     }
 
-    private function isSafeRelativePath($path): bool
+    private function isValidConfiguredRelativePath($path): bool
     {
         if (!is_string($path) || $path === '' || strpos($path, '\\') !== false
             || preg_match('/[<>:"|?*{}\x00-\x1F\x7F]/', $path)) {
