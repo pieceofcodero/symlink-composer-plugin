@@ -9,11 +9,30 @@ Requires PHP 7.4 or PHP 8.x and Composer 2.
 On Windows, PHP needs permission to create symbolic links; an elevated terminal
 may be required. Links use absolute targets on Windows, including when an installer
 places sources on another drive. Unix links use relative targets. After moving a
-Windows project, recreate its links to update their targets.
+Windows project, follow the [recovery instructions](#cleaning-up-stale-links) to
+reset ownership tracking and recreate links with updated targets.
 
 ```bash
 composer require pieceofcodero/symlink-composer-plugin
 ```
+
+Composer 2.2 and later asks whether to allow this plugin to execute code. Approve
+it if you trust it. For noninteractive installs, add this setting to the root
+project's `composer.json` before running `composer require` or `composer install`:
+
+```json
+{
+    "config": {
+        "allow-plugins": {
+            "pieceofcodero/symlink-composer-plugin": true
+        }
+    }
+}
+```
+
+Merge this entry into any existing `config.allow-plugins` settings. Without
+approval, a noninteractive install fails. See Composer's
+[`allow-plugins` documentation](https://getcomposer.org/doc/06-config.md#allow-plugins).
 
 ## Configuration
 
@@ -184,6 +203,13 @@ unwritable, or symlinked metadata files stop processing with an error and preser
 existing destinations. The record is scoped to the project's absolute directory;
 after moving or copying a project, remove the old ownership file to reset tracking,
 then run `composer symlink-recreate-all`. Unrecorded old links remain untouched.
+
+On Windows, before running that command, also remove the old project symlinks
+whose absolute targets still point to the previous location, including dangling
+links. Remove only the links themselves, leaving their targets intact. Resetting
+ownership metadata does not allow the plugin to replace these links: they are
+preserved and reported as conflicts when they point somewhere other than the
+expected source in the new location.
 
 ## Path Placeholders
 
