@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use Composer\Composer;
 use Composer\Console\Application;
 use Composer\Config;
@@ -259,7 +260,7 @@ final class SymlinkRecreateCommandTest extends BaseTestCase
      */
     public function testReturnsOneForFilesystemFailuresUnderComposersErrorHandler(string $operation, string $preferredName): void
     {
-        if (DIRECTORY_SEPARATOR === '\\') {
+        if (Filesystem::isWindows()) {
             self::markTestSkipped('This test requires POSIX directory permissions.');
         }
         $blocked = $this->package('acme/widget', ['symlink-preferred-name' => $preferredName]);

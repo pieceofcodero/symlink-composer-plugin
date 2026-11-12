@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use Composer\Composer;
 use Composer\Autoload\AutoloadGenerator;
 use Composer\Config;
@@ -328,7 +329,7 @@ final class SymlinkManagerCleanupTest extends BaseTestCase
 
     public function testWindowsProjectIdentityIgnoresPathCasing(): void
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::markTestSkipped('Requires Windows path conventions.');
         }
         $this->createInitialLink();
@@ -544,7 +545,7 @@ final class SymlinkManagerCleanupTest extends BaseTestCase
 
     private function requirePermissions(string $directory): void
     {
-        if (DIRECTORY_SEPARATOR === '\\') {
+        if (Filesystem::isWindows()) {
             self::markTestSkipped('Requires POSIX directory permissions.');
         }
         chmod($directory, 0555);

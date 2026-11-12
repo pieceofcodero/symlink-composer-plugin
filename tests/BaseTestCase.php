@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use PHPUnit\Framework\TestCase;
 
 abstract class BaseTestCase extends TestCase
@@ -9,7 +10,7 @@ abstract class BaseTestCase extends TestCase
     /** Build equivalent fixtures without depending on Unix-only symlink creation behavior. */
     protected function createFixtureLink(string $target, string $link): string
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::assertTrue(symlink($target, $link));
             return readlink($link);
         }
@@ -50,7 +51,7 @@ abstract class BaseTestCase extends TestCase
 
     protected function removeFixtureEntry(string $path): bool
     {
-        if (DIRECTORY_SEPARATOR === '\\' && is_link($path) && @rmdir($path)) {
+        if (Filesystem::isWindows() && is_link($path) && @rmdir($path)) {
             return true;
         }
         return unlink($path);
@@ -62,7 +63,7 @@ abstract class BaseTestCase extends TestCase
         $actualPath = realpath($actual);
         self::assertNotFalse($expectedPath, 'Expected path must exist: ' . $expected);
         self::assertNotFalse($actualPath, 'Actual path must exist: ' . $actual);
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::assertSame($expectedPath, $actualPath, $message);
             return;
         }
@@ -76,7 +77,7 @@ abstract class BaseTestCase extends TestCase
     {
         $target = readlink($link);
         self::assertNotFalse($target);
-        if (DIRECTORY_SEPARATOR === '\\') {
+        if (Filesystem::isWindows()) {
             self::assertSame(1, preg_match('~^(?:[A-Za-z]:[\\\\/]|[\\\\/]{2})~', $target), 'Windows links use absolute targets');
         } else {
             self::assertSame(0, preg_match('~^(?:/|[A-Za-z]:)~', $target), 'Unix links retain relative targets');

@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use Composer\Composer;
 use Composer\Config;
 use Composer\Downloader\DownloadManager;
@@ -339,7 +340,7 @@ final class SymlinkManagerPathRuleTest extends BaseTestCase
 
         self::assertTrue($manager->createSymlinksForAllPackages());
         $this->assertSourceLink('vendor/acme/widget/assets/images/self', 'vendor/acme/widget/assets/images');
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::assertSame('.', readlink('vendor/acme/widget/assets/images/self'));
         }
     }

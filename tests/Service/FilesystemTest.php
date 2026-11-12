@@ -101,7 +101,7 @@ final class FilesystemTest extends BaseTestCase
     /** @dataProvider danglingLinkProvider */
     public function testCanonicalPathRejectsDanglingLinksOnUnix(bool $directory): void
     {
-        if (DIRECTORY_SEPARATOR === '\\') {
+        if (Filesystem::isWindows()) {
             self::markTestSkipped('Requires Unix symlink semantics.');
         }
         [$target, $link] = $this->createDanglingLink($directory);
@@ -115,7 +115,7 @@ final class FilesystemTest extends BaseTestCase
     /** @dataProvider danglingLinkProvider */
     public function testCanonicalPathRejectsDanglingLinksOnWindows(bool $directory): void
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::markTestSkipped('Requires Windows symlink semantics.');
         }
         [$target, $link] = $this->createDanglingLink($directory);
@@ -149,7 +149,7 @@ final class FilesystemTest extends BaseTestCase
 
     public function testWindowsKeysIgnoreSeparatorAndDriveLetterCasing(): void
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::markTestSkipped('Requires Windows path conventions.');
         }
         self::assertSame('c:\\work\\public\\widget', Filesystem::pathKey('C:/Work/public/Widget'));

@@ -5,6 +5,11 @@ namespace Pieceofcodero\SymlinkComposerPlugin\Service;
 /** Platform differences shared by link creation and ownership checks. */
 final class Filesystem
 {
+    public static function isWindows(): bool
+    {
+        return DIRECTORY_SEPARATOR === '\\';
+    }
+
     public static function canonicalPath(string $path): ?string
     {
         $resolved = realpath($path);
@@ -12,7 +17,7 @@ final class Filesystem
         if ($resolved === false || !file_exists($resolved)) {
             return null;
         }
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!self::isWindows()) {
             return $resolved;
         }
 
@@ -51,7 +56,7 @@ final class Filesystem
 
     public static function pathKey(string $path): string
     {
-        return DIRECTORY_SEPARATOR === '\\' ? strtolower(str_replace('/', '\\', $path)) : $path;
+        return self::isWindows() ? strtolower(str_replace('/', '\\', $path)) : $path;
     }
 
     /** Never recurse into a link's target, including when a directory link is dangling. */
@@ -61,7 +66,7 @@ final class Filesystem
         if (!is_link($path)) {
             return false;
         }
-        if (DIRECTORY_SEPARATOR === '\\' && @rmdir($path)) {
+        if (self::isWindows() && @rmdir($path)) {
             return true;
         }
         return @unlink($path);

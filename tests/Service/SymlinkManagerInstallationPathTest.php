@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use Composer\Composer;
 use Composer\Config;
 use Composer\Downloader\DownloadManager;
@@ -212,7 +213,7 @@ final class SymlinkManagerInstallationPathTest extends BaseTestCase
 
     public function testSupportsWindowsCustomInstallersOnAnotherDrive(): void
     {
-        if (DIRECTORY_SEPARATOR !== '\\' || strcasecmp(substr(getcwd(), 0, 2), substr($this->originalCwd, 0, 2)) === 0) {
+        if (!Filesystem::isWindows() || strcasecmp(substr(getcwd(), 0, 2), substr($this->originalCwd, 0, 2)) === 0) {
             self::markTestSkipped('Requires a Windows workspace and temporary directory on different drives.');
         }
         $source = $this->originalCwd . '/.symlink-cross-drive-' . bin2hex(random_bytes(8));

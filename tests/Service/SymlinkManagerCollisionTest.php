@@ -2,6 +2,7 @@
 
 namespace Pieceofcodero\SymlinkComposerPlugin\Tests\Service;
 
+use Pieceofcodero\SymlinkComposerPlugin\Service\Filesystem;
 use Composer\Composer;
 use Composer\Config;
 use Composer\Downloader\DownloadManager;
@@ -70,7 +71,7 @@ final class SymlinkManagerCollisionTest extends BaseTestCase
 
     public function testDetectsWindowsDestinationCasingCollisions(): void
     {
-        if (DIRECTORY_SEPARATOR !== '\\') {
+        if (!Filesystem::isWindows()) {
             self::markTestSkipped('Requires a Windows filesystem.');
         }
         $first = $this->package('acme/widget');

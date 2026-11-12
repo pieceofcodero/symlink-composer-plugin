@@ -380,7 +380,7 @@ class SymlinkManager
         // Create the symlink
         // Use an existing absolute target on Windows to avoid PHP's relative-path
         // limitations and support custom installers on a different drive.
-        $linkTarget = DIRECTORY_SEPARATOR === '\\'
+        $linkTarget = Filesystem::isWindows()
             ? Filesystem::canonicalPath($sourcePath)
             : $this->getRelativePath(dirname($resolvedTargetPath), $sourcePath);
         $linkDirectory = Filesystem::canonicalPath(dirname($resolvedTargetPath));
