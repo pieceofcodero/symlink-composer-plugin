@@ -102,13 +102,39 @@ use them in your pages:
 <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
 ```
 
-Another use case is self-hosting **TinyMCE**. Its
+### Example: serve the whole TinyMCE package
+
+TinyMCE's
 [Composer guide](https://www.tiny.cloud/docs/tinymce/latest/php-projects/)
 asks you to expose the installed editor through a webserver route or copy its
-directory into a public folder. After installing `tinymce/tinymce`, the rule
-`"public/vendor/tinymce": "package:tinymce/tinymce"` links the whole editor
-directory instead. Its script is then available at
-`/vendor/tinymce/tinymce.min.js`.
+directory into a public folder. To link the whole editor directory, add this
+configuration to your root `composer.json`:
+
+```json
+{
+    "extra": {
+        "symlink-paths": {
+            "public/vendor/tinymce": "package:tinymce/tinymce"
+        }
+    }
+}
+```
+
+Then install TinyMCE; the link is created automatically:
+
+```bash
+composer require tinymce/tinymce
+```
+
+If TinyMCE is already installed, run `composer symlink-recreate-all` to apply the
+rule immediately. With the default vendor directory, the result on Unix is:
+
+```text
+public/vendor/tinymce -> ../../vendor/tinymce/tinymce
+```
+
+With `public/` as your web root, the editor script is available at
+`/vendor/tinymce/tinymce.min.js`, alongside its plugins, skins, and other files.
 
 ### Example: share configuration and API contracts
 
@@ -153,6 +179,40 @@ matching and validation behavior. `package:` accepts only a package name, and
 `path:` requires a nonempty relative source path. The `vendor:` and `type:`
 prefixes remain required for their selectors; slashes in a `type:` value are
 part of that type.
+
+### Linking whole packages
+
+For an application that discovers modules in a `modules/` directory, use an
+exact package name, a vendor selector, or a package-type selector to link entire
+installed packages:
+
+```json
+{
+    "extra": {
+        "symlink-paths": {
+            "modules/special-widget": "acme/special-widget",
+            "modules/acme/{$name}": "vendor:acme",
+            "modules/{$package}": "type:acme-module"
+        }
+    }
+}
+```
+
+For example, if these three installed packages all declare type `acme-module`,
+the rules produce:
+
+| Installed package | Whole-package link |
+| --- | --- |
+| `acme/special-widget` | `modules/special-widget` |
+| `acme/catalog` | `modules/acme/catalog` |
+| `other/calendar` | `modules/other/calendar` |
+
+Only the first matching whole-package rule applies to each package. The exact
+name takes precedence here, followed by the vendor rule, then the type rule.
+Each link points to the package's installation directory; the package stays in
+Composer's chosen location. Linking is automatic when these rules are in place
+before installation. For packages already installed, use
+`composer symlink-recreate-all` to apply the rules immediately.
 
 ### Linking individual files and folders
 
