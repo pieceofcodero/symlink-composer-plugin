@@ -1,16 +1,27 @@
 # Symlink Composer Plugin
 
-A Composer plugin that creates symlinks for specific packages according to defined criteria.
+A Composer plugin for symlinking packages, individual files, and folders to custom
+locations, with package, vendor, and type matching.
+
+Only the root project needs to install and allow this plugin. The packages you
+link do not need to require it or change their metadata. Matching works with
+ordinary packages and custom package types alike. Packages stay in Composer's
+chosen installation location; the plugin makes them accessible at the additional
+paths you configure.
+
+Composer installs dependencies, but a web application may need their assets in
+its public directory. For example, link Bootstrap's compiled CSS and JavaScript
+from its `dist/` folder to `public/vendor/bootstrap` without copying files after
+each update.
 
 ## Installation
 
 Requires PHP 7.4 or PHP 8.x and Composer 2.
 
 On Windows, PHP needs permission to create symbolic links; an elevated terminal
-may be required. Links use absolute targets on Windows, including when an installer
-places sources on another drive. Unix links use relative targets. After moving a
-Windows project, follow the [recovery instructions](#cleaning-up-stale-links) to
-reset ownership tracking and recreate links with updated targets.
+may be required. After moving a project, follow the
+[recovery instructions](#cleaning-up-stale-links) to recreate links for its new
+location.
 
 ```bash
 composer require pieceofcodero/symlink-composer-plugin
@@ -34,20 +45,100 @@ Merge this entry into any existing `config.allow-plugins` settings. Without
 approval, a noninteractive install fails. See Composer's
 [`allow-plugins` documentation](https://getcomposer.org/doc/06-config.md#allow-plugins).
 
+### How this differs from custom installers
+
+[`composer/installers`](https://github.com/composer/installers#custom-install-paths)
+chooses where whole packages of supported types are installed. This plugin adds
+links to installed packages or selected files and folders, using the installation
+paths supplied by Composer. It also works with packages already handled by a
+custom installer.
+
+Your rules can select a package by name or vendor regardless of its type, or
+match a declared custom type such as `acme-widget` with `type:acme-widget`.
+There is no list of supported framework types to extend in this plugin.
+
 ## Configuration
 
-Add a `symlink-paths` section to the `extra` section of your composer.json:
+### Example: serve Bootstrap assets
+
+[Bootstrap supports installation with Composer](https://getbootstrap.com/docs/5.3/getting-started/download/#composer).
+To expose only Bootstrap's compiled `dist/` folder, add a `symlink-paths` section
+to the `extra` section of your root `composer.json`:
 
 ```json
 {
     "extra": {
         "symlink-paths": {
-            "public/components/{$name}": ["vendor:some-vendor", "type:component"],
-            "public/js/{$name}": "vendor:js-vendor"
+            "public/vendor/bootstrap": "path:twbs/bootstrap/dist"
         }
     }
 }
 ```
+
+With the plugin enabled and this configuration in place, install Bootstrap 5:
+
+```bash
+composer require twbs/bootstrap:^5.3
+```
+
+The link is created automatically during installation. If Bootstrap was already
+installed before you added the rule, apply the new configuration immediately with:
+
+```bash
+composer symlink-recreate-all
+```
+
+With the default Composer vendor directory, the result on Unix is:
+
+```text
+public/vendor/bootstrap -> ../../vendor/twbs/bootstrap/dist
+```
+
+If `public/` is your web root and your webserver allows serving symlinked assets,
+use them in your pages:
+
+```html
+<link rel="stylesheet" href="/vendor/bootstrap/css/bootstrap.min.css">
+<script src="/vendor/bootstrap/js/bootstrap.bundle.min.js"></script>
+```
+
+Another use case is self-hosting **TinyMCE**. Its
+[Composer guide](https://www.tiny.cloud/docs/tinymce/latest/php-projects/)
+asks you to expose the installed editor through a webserver route or copy its
+directory into a public folder. After installing `tinymce/tinymce`, the rule
+`"public/vendor/tinymce": "package:tinymce/tinymce"` links the whole editor
+directory instead. Its script is then available at
+`/vendor/tinymce/tinymce.min.js`.
+
+### Example: share configuration and API contracts
+
+A package maintained by your team could supply an `.editorconfig` file and an
+OpenAPI specification. For example, if `acme/team-config` contains `.editorconfig`
+and `openapi.yaml` at its package root, expose them at the paths your tools expect:
+
+```json
+{
+    "extra": {
+        "symlink-paths": {
+            ".editorconfig": "path:acme/team-config/.editorconfig",
+            "docs/openapi.yaml": "path:acme/team-config/openapi.yaml"
+        }
+    }
+}
+```
+
+If the rules are in place before installing the package, linking is automatic.
+If the package is already installed, run `composer symlink-recreate-all` to apply
+the new rules immediately. The links read the installed package's files directly,
+so updates need no separate copying step.
+Existing handwritten files are preserved and reported as destination conflicts.
+You can ignore these generated links in Git alongside your vendor directory.
+
+Check that the consuming tool supports symlinked configuration files. For
+example, [Git does not follow symlinked `.gitattributes` files](https://git-scm.com/docs/gitattributes#_notes),
+so `.gitattributes` is unsuitable for this pattern.
+
+### Source selectors
 
 Exact package names and package-relative paths accept optional prefixes:
 
@@ -72,13 +163,16 @@ specific file or folder from a package:
 {
     "extra": {
         "symlink-paths": {
-            "public/js/widget.js": "path:acme/widget/dist/widget.min.js",
-            "public/css/widget.css": "acme/widget/dist/widget.css",
-            "public/images/widget": "path:acme/widget/assets/images"
+            "public/css/bootstrap.min.css": "path:twbs/bootstrap/dist/css/bootstrap.min.css",
+            "public/js/bootstrap": "twbs/bootstrap/dist/js"
         }
     }
 }
 ```
+
+This is an alternative to linking the entire Bootstrap `dist/` folder: it links
+one CSS file and the JavaScript folder separately. If you need the CSS source map
+for browser debugging, add a rule for `dist/css/bootstrap.min.css.map` too.
 
 Each key is the exact destination of the symlink, including a filename for a
 file link. The first two source segments identify the package; the remainder is
@@ -96,6 +190,9 @@ through a symlinked path repository.
 
 ### Matching and precedence
 
+- Use `vendor:some-vendor` or `type:component` to select whole packages by vendor
+  or Composer package type. Destination placeholders such as `public/{$name}`
+  give each matching package its own link; see [Path Placeholders](#path-placeholders).
 - Whole-package criteria are an exact package name (optionally prefixed with
   `package:`), `vendor:vendor`, or `type:type`. Only the first matching
   whole-package destination is processed for each package.
@@ -145,9 +242,29 @@ Matched packages without an installation directory, including metapackages,
 are reported as errors. Missing directories and installer lookup failures are
 also reported as errors while remaining packages continue to be processed.
 
+### Choosing symlinks for your project
+
+Symlinks give each destination access to the installed source without a separate
+copy. Editing a file through a link also changes the installed source. Choose
+copies when destinations need independent changes.
+
+When deploying, keep the link targets available and preserve their paths relative
+to the links, or package the linked files as real files by dereferencing links.
+Check that your hosting environment permits symlinks. Windows uses absolute
+targets and needs the [recovery steps below](#cleaning-up-stale-links) after a move.
+
+For public destinations, prefer links to the specific assets you intend to
+serve. A whole-package link exposes the package tree to your webserver, including
+any configuration, tests, or documentation it contains. PHP's
+[`__DIR__` and `__FILE__`](https://www.php.net/manual/en/language.constants.magic.php)
+resolve to the source location; check applications that assume they were
+physically installed at the destination.
+
 ### Recreating all symlinks
 
-If you need to recreate all symlinks (for example, after changing the configuration), use the dedicated command:
+Linking is automatic when packages are installed or updated with the rules
+already in place. To apply configuration added or changed after a package was
+installed, or to recreate existing links manually, use the dedicated command:
 
 ```bash
 composer symlink-recreate-all
@@ -189,10 +306,9 @@ as errors.
 ### Cleaning up stale links
 
 The plugin records links it successfully creates or recreates in
-`<vendor-dir>/composer/symlink-composer-plugin.json`. The record includes the
-canonical destination, package name, exact symlink target, and filesystem
-identity. The configured vendor directory is used, including custom locations.
-Access to the record is locked, and updates replace the metadata file atomically.
+`<vendor-dir>/composer/symlink-composer-plugin.json`, using your configured vendor
+directory. This ownership file lets the plugin identify the links it can safely
+remove.
 
 When a package is removed, only its recorded links are considered for deletion.
 After a successful package reconfiguration, obsolete destinations for that
@@ -200,18 +316,11 @@ package are removed. A full reconciliation also cleans up links belonging to
 packages that are no longer installed. Removing all `symlink-paths` rules
 cleans up all unchanged recorded links. Parent directories are left in place.
 
-A link is removed only if its identity and target still match the ownership
-record and its parent still resolves to the recorded directory. This also
-allows removal of owned dangling links. Replaced links, regular files,
-directories, unrelated links, and destinations under redirected parents are
-preserved; obsolete ownership records for them are forgotten. Links created
-before ownership tracking are left in place until a successful recreation
-records them.
-
-On Windows, directory symlinks are removed with `rmdir()` and file symlinks with
-`unlink()`. Both operations remove the link itself and preserve its target.
-Windows path comparisons account for separators, ASCII casing, and short directory
-aliases such as `RUNNER~1`.
+Only unchanged plugin-owned links are removed, including dangling links whose
+sources no longer exist. Their targets are preserved. Replaced links, regular
+files, directories, unrelated links, and links under redirected parent directories
+are left in place. Links created before ownership tracking are left in place
+until a successful recreation records them.
 
 If any requested link for a package fails, that package's obsolete links are
 kept for a retry. Invalid root configuration suppresses obsolete-link cleanup
@@ -232,6 +341,9 @@ links. Remove only the links themselves, leaving their targets intact. Resetting
 ownership metadata does not allow the plugin to replace these links: they are
 preserved and reported as conflicts when they point somewhere other than the
 expected source in the new location.
+
+See [Link ownership internals](docs/link-ownership.md) for the tracking and
+platform-specific implementation details.
 
 ## Path Placeholders
 
@@ -273,30 +385,4 @@ creating directories or replacing links.
 
 ## Development
 
-Install development dependencies with `composer install`, then run the PHPUnit
-regression suite with `composer test`. To run a subset, pass PHPUnit options
-through Composer, for example `composer test -- --filter RejectsInvalidMetadata`.
-
-The suite uses PHPUnit 9.6, which runs on the minimum supported PHP version, 7.4.
-Composer resolves dependencies against PHP 7.4.0 so development dependencies
-remain compatible with that minimum even when installed using a newer PHP.
-
-GitHub Actions runs `composer validate --strict`, installs development dependencies,
-checks the actual runtime requirements with `composer check-platform-reqs`, and
-runs `composer test` on Linux and Windows with PHP 7.4 and PHP 8.0–8.5. The workflow
-runs on pushes and pull requests and can also be started manually. Each PHP version runs
-independently on each operating system so a failure does not cancel the other jobs.
-
-The regression suite covers package and individual-path linking, preservation of
-existing files and unrelated links, destination collisions, traversal protection,
-custom installation paths, invalid configuration, and command failure reporting.
-Cleanup tests cover ownership persistence, configuration changes, package removal,
-user replacements, redirected parents, corrupt metadata, and retrying failures.
-Permission-failure tests require a non-root POSIX user; FIFO tests require the
-POSIX extension. These tests are skipped on Windows; the remaining suite runs
-on both operating systems. The POSIX extension is requested only for Linux jobs.
-Windows fixtures create links to existing targets before making them dangling;
-self-referencing fixtures are built by moving a link onto its former target.
-Assertions compare filesystem identities so long paths and 8.3 aliases can refer
-to the same object. Windows-specific tests also cover path casing, drive roots,
-and custom installer sources on another drive when one is available.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, tests, and CI details.
